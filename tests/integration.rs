@@ -7,14 +7,14 @@
 // ============================================================================
 
 mod basic_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct TestSuite {
         param1: usize,
         param2: String,
     }
 
-    #[generate_test_macro(basic_suite)]
+    #[test_suite_macro(basic_suite)]
     impl TestSuite {
         fn new(param1: usize, param2: String) -> Self {
             Self { param1, param2 }
@@ -61,7 +61,7 @@ impl MyTrait for ConcreteType {
 }
 
 mod generic_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     use super::MyTrait;
 
@@ -71,7 +71,7 @@ mod generic_suite {
         _marker: std::marker::PhantomData<T>,
     }
 
-    #[generate_test_macro(generic_suite)]
+    #[test_suite_macro(generic_suite)]
     impl<T: MyTrait> GenericTestSuite<T> {
         fn new(param1: usize, param2: String) -> Self {
             Self {
@@ -108,13 +108,13 @@ generic_suite!(run_for_concrete_type, ConcreteType, 42, "world".to_string());
 // ============================================================================
 
 mod passthrough_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct Suite {
         value: usize,
     }
 
-    #[generate_test_macro(passthrough_suite)]
+    #[test_suite_macro(passthrough_suite)]
     impl Suite {
         fn new(value: usize) -> Self {
             Self { value }
@@ -143,7 +143,7 @@ passthrough_suite!(run_passthrough_suite, 42);
 // ============================================================================
 
 mod no_test_methods {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct Plain {
         pub x: usize,
@@ -151,7 +151,7 @@ mod no_test_methods {
 
     // No #[test] or #[quickcheck] methods – the macro should leave the impl
     // block unchanged and emit no macro_rules!.
-    #[generate_test_macro(no_test_methods)]
+    #[test_suite_macro(no_test_methods)]
     impl Plain {
         #[allow(dead_code)]
         pub fn helper(&self) -> usize {
@@ -178,12 +178,12 @@ fn no_test_methods_impl_is_intact() {
 
 #[cfg(feature = "quickcheck")]
 mod quickcheck_suite {
-    use generate_test_macro::generate_test_macro;
     use quickcheck::TestResult;
+    use test_suite_macro::test_suite_macro;
 
     pub struct MathSuite;
 
-    #[generate_test_macro(quickcheck_suite)]
+    #[test_suite_macro(quickcheck_suite)]
     impl MathSuite {
         /// Addition is commutative for all u32 pairs.
         #[quickcheck]
@@ -211,7 +211,7 @@ quickcheck_suite!(run_quickcheck_suite);
 // the property only exercises the type-param threading, not the trait itself.
 #[cfg(feature = "quickcheck")]
 mod generic_quickcheck_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     use super::MyTrait;
 
@@ -219,7 +219,7 @@ mod generic_quickcheck_suite {
         _marker: std::marker::PhantomData<T>,
     }
 
-    #[generate_test_macro(generic_quickcheck_suite)]
+    #[test_suite_macro(generic_quickcheck_suite)]
     impl<T: MyTrait + 'static> GenericSuite<T> {
         /// Multiplying any u32 by 1 is an identity operation.
         #[quickcheck]
@@ -244,11 +244,11 @@ generic_quickcheck_suite!(run_generic_quickcheck_suite, ConcreteType);
 // ============================================================================
 
 mod cfg_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct CfgSuite;
 
-    #[generate_test_macro(cfg_suite)]
+    #[test_suite_macro(cfg_suite)]
     impl CfgSuite {
         fn new() -> Self {
             Self
@@ -283,11 +283,11 @@ cfg_suite!(run_cfg_suite);
 // Quickcheck variant: cfg on a #[quickcheck] method.
 #[cfg(feature = "quickcheck")]
 mod cfg_quickcheck_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct CfgQcSuite;
 
-    #[generate_test_macro(cfg_quickcheck_suite)]
+    #[test_suite_macro(cfg_quickcheck_suite)]
     impl CfgQcSuite {
         #[quickcheck]
         #[cfg(target_pointer_width = "64")]
@@ -313,11 +313,11 @@ cfg_quickcheck_suite!(run_cfg_quickcheck_suite);
 // ============================================================================
 
 mod static_test_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct StaticSuite;
 
-    #[generate_test_macro(static_test_suite)]
+    #[test_suite_macro(static_test_suite)]
     impl StaticSuite {
         // No `new` needed – none of the tests take self.
 
@@ -342,13 +342,13 @@ static_test_suite!(run_static_test_suite);
 // ============================================================================
 
 mod mixed_suite {
-    use generate_test_macro::generate_test_macro;
+    use test_suite_macro::test_suite_macro;
 
     pub struct MixedSuite {
         value: usize,
     }
 
-    #[generate_test_macro(mixed_suite)]
+    #[test_suite_macro(mixed_suite)]
     impl MixedSuite {
         fn new(value: usize) -> Self {
             Self { value }

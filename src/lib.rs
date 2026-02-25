@@ -1,6 +1,6 @@
 //! A proc macro for writing a suite of unit tests as methods on a struct.
 //!
-//! Attach `#[generate_test_macro(name)]` to an `impl` block to produce:
+//! Attach `#[test_suite_macro(name)]` to an `impl` block to produce:
 //!
 //! 1. The same `impl` block with `new`, `#[test]`, and `#[quickcheck]` methods
 //!    made `pub` / `#[doc(hidden)]` (and their special attributes stripped).
@@ -13,7 +13,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::{parse_macro_input, parse_quote, FnArg, ImplItem, ItemImpl, Pat, Visibility};
+use syn::{FnArg, ImplItem, ItemImpl, Pat, Visibility, parse_macro_input, parse_quote};
 
 // ---------------------------------------------------------------------------
 // Token-stream helpers
@@ -38,10 +38,10 @@ fn extract_struct_name(ty: &syn::Type) -> Ident {
             .path
             .segments
             .last()
-            .expect("generate_test_macro: expected at least one path segment in self type")
+            .expect("test_suite_macro: expected at least one path segment in self type")
             .ident
             .clone(),
-        _ => panic!("generate_test_macro: self type must be a path (e.g. `Struct<T>`)"),
+        _ => panic!("test_suite_macro: self type must be a path (e.g. `Struct<T>`)"),
     }
 }
 
@@ -79,7 +79,7 @@ struct QuickcheckMethod {
 /// # Example
 ///
 /// ```rust,ignore
-/// #[generate_test_macro(my_suite_tests)]
+/// #[test_suite_macro(my_suite_tests)]
 /// impl<T: MyTrait> MySuite<T> {
 ///     fn new(arg: usize) -> Self { Self { arg } }
 ///
@@ -92,7 +92,7 @@ struct QuickcheckMethod {
 /// my_suite_tests!(for_concrete_impl, ConcreteType, 42);
 /// ```
 #[proc_macro_attribute]
-pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let macro_name = parse_macro_input!(attr as Ident);
     let mut impl_block = parse_macro_input!(item as ItemImpl);
 

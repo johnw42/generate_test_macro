@@ -1,0 +1,26 @@
+[package]
+name = "generate_test_macro"
+version = "0.1.0"
+edition = "2021"
+description = "A proc macro for writing test suites as methods on a struct, generating a macro_rules! macro to instantiate each test individually."
+license = "MIT OR Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = [
+  "full",
+] }
+
+[dev-dependencies]
+quickcheck = "1.0"
+
+[features]
+default = [
+  "quickcheck",
+]
+quickcheck = [
+]

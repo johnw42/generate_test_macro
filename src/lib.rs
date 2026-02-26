@@ -145,10 +145,10 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         if is_new {
             for input in &method.sig.inputs {
-                if let FnArg::Typed(pt) = input {
-                    if let Pat::Ident(pi) = pt.pat.as_ref() {
-                        new_param_names.push(pi.ident.clone());
-                    }
+                if let FnArg::Typed(pt) = input
+                    && let Pat::Ident(pi) = pt.pat.as_ref()
+                {
+                    new_param_names.push(pi.ident.clone());
                 }
             }
         } else if is_test {

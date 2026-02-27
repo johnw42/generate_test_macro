@@ -13,7 +13,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::{FnArg, ImplItem, ItemImpl, Pat, Visibility, parse_macro_input, parse_quote};
+use syn::{FnArg, ImplItem, ItemImpl, Visibility, parse_macro_input, parse_quote};
 
 // ---------------------------------------------------------------------------
 // Token-stream helpers
@@ -110,7 +110,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // ------------------------------------------------------------------
     // Walk the impl items, categorising and transforming each method.
     // ------------------------------------------------------------------
-    let mut new_param_names: Vec<Ident> = Vec::new();
     let mut test_methods: Vec<TestMethod> = Vec::new();
     #[cfg(feature = "quickcheck")]
     let mut quickcheck_methods: Vec<QuickcheckMethod> = Vec::new();
@@ -143,15 +142,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             method.attrs.insert(0, parse_quote!(#[doc(hidden)]));
         }
 
-        if is_new {
-            for input in &method.sig.inputs {
-                if let FnArg::Typed(pt) = input
-                    && let Pat::Ident(pi) = pt.pat.as_ref()
-                {
-                    new_param_names.push(pi.ident.clone());
-                }
-            }
-        } else if is_test {
+        if is_test {
             let cfg_attrs = method
                 .attrs
                 .iter()
@@ -183,8 +174,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // If there is nothing to generate, just return the transformed impl.
     // ------------------------------------------------------------------
     let has_test_methods = !test_methods.is_empty();
-    // `new` params are only needed in the macro pattern when at least one
-    // #[test] method takes a `self` receiver.
     let has_self_test_methods = test_methods.iter().any(|tm| tm.has_self);
     #[cfg(feature = "quickcheck")]
     let has_quickcheck_methods = !quickcheck_methods.is_empty();
@@ -196,84 +185,17 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // ------------------------------------------------------------------
-    // Build the macro_rules! pattern:
-    //
-    //   ($mod_name:ident $(, $T:ty)* $(, $param:expr)*)
-    //
-    // The `, $param:expr` pieces are only present when #[test] methods exist
-    // (they need `Self::new(…)` to be called).
+    // Dollar-metavariable helpers used inside the generated macro body.
     // ------------------------------------------------------------------
-
-    let pat_mod_name = {
-        let dv = dollar_ident("mod_name");
-        quote! { #dv : ident }
-    };
-
-    let pat_type_params: TokenStream2 = type_params
-        .iter()
-        .map(|tp| {
-            let dv = dollar_ident(&tp.to_string());
-            quote! { , #dv : ty }
-        })
-        .collect();
-
-    let pat_new_params: TokenStream2 = if has_self_test_methods {
-        new_param_names
-            .iter()
-            .map(|p| {
-                let dv = dollar_ident(&p.to_string());
-                quote! { , #dv : expr }
-            })
-            .collect()
-    } else {
-        TokenStream2::new()
-    };
-
-    // ------------------------------------------------------------------
-    // Build re-usable snippets for the macro expansion body.
-    // ------------------------------------------------------------------
-
     let dollar_mod_name = dollar_ident("mod_name");
-
-    // `StructName::<$T, …>` – unqualified; the struct must be in scope at the
-    // macro invocation site (e.g. via `use super::*` or an explicit `use`).
-    let type_path_args: TokenStream2 = if type_params.is_empty() {
-        TokenStream2::new()
-    } else {
-        let args: TokenStream2 = type_params
-            .iter()
-            .enumerate()
-            .map(|(i, tp)| {
-                let dv = dollar_ident(&tp.to_string());
-                if i == 0 {
-                    quote! { #dv }
-                } else {
-                    quote! { , #dv }
-                }
-            })
-            .collect();
-        quote! { :: < #args > }
-    };
-
-    // `( $param1 , $param2 , … )` for the `new` call
-    let new_call_args: TokenStream2 = {
-        let args: TokenStream2 = new_param_names
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let dv = dollar_ident(&p.to_string());
-                if i == 0 {
-                    quote! { #dv }
-                } else {
-                    quote! { , #dv }
-                }
-            })
-            .collect();
-        quote! { ( #args ) }
-    };
+    let dollar_type = dollar_ident("type");
+    let dollar_expr = dollar_ident("expr");
 
     // ------------------------------------------------------------------
     // Emit `#[test]` wrappers.
+    //
+    // Each wrapper references $type (and $expr for instance methods), which
+    // are macro metavariables supplied by the caller at invocation time.
     // ------------------------------------------------------------------
     let test_fn_items: TokenStream2 = test_methods
         .iter()
@@ -282,12 +204,12 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             let cfg_attrs = &tm.cfg_attrs;
             let call = if tm.has_self {
                 quote! {
-                    #struct_name #type_path_args
-                        :: new #new_call_args . #name ();
+                    let instance : #dollar_type = #dollar_expr;
+                    instance . #name ();
                 }
             } else {
                 quote! {
-                    #struct_name #type_path_args :: #name ();
+                    < #dollar_type > :: #name ();
                 }
             };
             quote! {
@@ -327,8 +249,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #[test]
                 pub fn #name() {
                     quickcheck::quickcheck(
-                        #struct_name #type_path_args
-                            :: #name as fn( #underscores ) -> _
+                        < #dollar_type > :: #name as fn( #underscores ) -> _
                     );
                 }
             }
@@ -338,12 +259,83 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let quickcheck_fn_items: TokenStream2 = TokenStream2::new();
 
     // ------------------------------------------------------------------
+    // Build the macro_rules! arms.
+    //
+    // Calling convention (README):
+    //   macro_name!($mod_name: $type = $instance_expr)
+    //
+    // The primary arm pattern depends on whether any test method takes self:
+    //   • with instance methods:  ($mod_name:ident : $type:ty = $expr:expr)
+    //   • static / quickcheck only: ($mod_name:ident : $type:ty)
+    //
+    // Supporting shorthand arms (generated via string parsing, since
+    // macro repetition syntax cannot be expressed with quote!):
+    //   • default arm:    ($mod_name:ident : $type:ty)
+    //                       → delegates using Default::default()
+    //   • turbofish arm:  ($mod_name:ident = StructName::<T,...> rest...)
+    //                       → infers type from expression
+    //   • plain abbrev:   ($mod_name:ident = StructName rest...)
+    //                       → infers type from expression
+    // ------------------------------------------------------------------
+    let macro_name_str = macro_name.to_string();
+    let struct_name_str = struct_name.to_string();
+
+    let (main_pat, supporting_arms) = if has_self_test_methods {
+        let pat = quote! {
+            #dollar_mod_name : ident : #dollar_type : ty = #dollar_expr : expr
+        };
+
+        // Default arm: omit expr, construct via Default::default().
+        let default_arm: TokenStream2 = format!(
+            "($mod_name:ident : $type:ty) => \
+             {{ {n}!($mod_name : $type = <$type as ::core::default::Default>::default()); }};",
+            n = macro_name_str
+        )
+        .parse()
+        .expect("test_suite_macro: default arm parse failed");
+
+        // Abbreviated turbofish arm: infer type from StructName::<T, …> expr.
+        let turbofish_arm: TokenStream2 = format!(
+            "($mod_name:ident = {s} :: <$($tparam:ty),*> $($rest:tt)*) => \
+             {{ {n}!($mod_name : {s}<$($tparam),*> = {s}::<$($tparam),*> $($rest)*); }};",
+            s = struct_name_str,
+            n = macro_name_str
+        )
+        .parse()
+        .expect("test_suite_macro: turbofish arm parse failed");
+
+        // Abbreviated plain arm: infer type from StructName expr.
+        let plain_arm: TokenStream2 = format!(
+            "($mod_name:ident = {s} $($rest:tt)*) => \
+             {{ {n}!($mod_name : {s} = {s} $($rest)*); }};",
+            s = struct_name_str,
+            n = macro_name_str
+        )
+        .parse()
+        .expect("test_suite_macro: plain abbreviated arm parse failed");
+
+        let arms = quote! {
+            #default_arm
+            #turbofish_arm
+            #plain_arm
+        };
+        (pat, arms)
+    } else {
+        // Static / quickcheck-only: caller supplies only the type.
+        let pat = quote! {
+            #dollar_mod_name : ident : #dollar_type : ty
+        };
+        (pat, TokenStream2::new())
+    };
+
+    // ------------------------------------------------------------------
     // Assemble the final output.
     // ------------------------------------------------------------------
     let macro_rules_def = quote! {
         #[macro_export]
         macro_rules! #macro_name {
-            ( #pat_mod_name #pat_type_params #pat_new_params ) => {
+            #supporting_arms
+            ( #main_pat ) => {
                 mod #dollar_mod_name {
                     #[allow(unused_imports)]
                     use super::*;

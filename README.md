@@ -1,120 +1,76 @@
-This crate contains a proc macro for writing a suite of unit tests as methods of an object which can be instantiated via a new macro to run each method as an individual test.
+Crate for generating test suites from the methods of a type.
 
-# Example
+This crate exposes a proc macro, `test_suite_macro`, that generates a new macro which can be expanded
+multiple times to generate test suites.
 
-Consider this test suite in `src/mytrait_tests.rs`:
+## Basic Usage
+
+To define a type as a test suite, use the `test_suite_macro` in a `impl` block, passing the name of the new macro to be generated.
+The `impl` block should contain methods annotated with `#[test]`:
 
 ```rust
-pub struct TestSuite<T> {
-  // Data needed for each test in the suite.
-  param1: usize,
-  param2: String,
-}
+struct ExampleSuite<T> {...}
 
-#[test_suite_macro(mytrait_test_suite)]
-impl<T: MyTrait> TestSuite<T> {
-  fn new(param1: usize, param2: String) -> Self {
-    Self { param1, param2 }
-  }
+#[test_suite_macro(example_suite)]
+impl ExampleSuite {
+  #[test]
+  pub fn instance_method_test(&self) {...}
+}
+```
+
+This generates a new macro which generates a package containing a `#[test]`
+function for each `#[test]` method of the type.  This calling convention of the
+macro is
+
+```
+example_suite($package_name: $test_type = $test_instance);
+```
+
+For example, invoking the macro like this
+
+```rust
+example_suite(test1: ExampleSuite<i32> = ExampleSuite {...});
+
+```
+
+will expand (roughly) to this module definition:
+
+```rust
+mod test1 {
+  use super::*;
 
   #[test]
-  fn my_test(&self) {
-    todo!("run a test");
+  fn instance_method_test() {
+    let instance: ExampleSuite<i32> = ExampleSuite {...};
+    instance.instance_method_test();
   }
 }
 ```
 
-The expansion of the impl looks like this:
+## Advanced Usage
 
-```rust
-impl<T: MyTrait> TestSuite<T> {
-  #[doc(hidden)]
-  pub fn new(param1: usize, param2: String) -> Self {
-    Self { param1, param2 }
-  }
+### Quickcheck
 
-  #[doc(hidden)]
-  pub fn my_test(&self) {
-    todo!("run a test");
-  }
-}
+In addition to methods marked as `#[test]`, methods can be marked with
+`#[quickcheck]`.  This operates like the `quickcheck` macro provided by the
+`quickcheck_macros` crate.
 
-#[macro_export]
-macro_rules! mytrait_test_suite {
-  ($mod_name:ident, $T:ty, $param1:expr, $param2:expr) => {
-    mod $mod_name {
-      use super::*;
+### The `self` Parameter
 
-      #[test]
-      fn my_test() {
-        TestSuite::<$T>::new($param1, $param2).my_test();
-      }
-    }
-  }
-}
-```
+The `self` parameter of test methods may be passed by value, reference, or mut
+reference.  The distinction is largely irrelevant, because a new instance of the
+test suite type is created for each test.
 
-The `TestSuite` type is referenced without qualification.  The generated module
-contains `use super::*;`, so `TestSuite` must be in scope at the site where the
-macro is invoked — either because it is defined there, or via an explicit `use`
-statement:
+### Static Methods
 
-```rust
-use my_crate::mytrait_tests::TestSuite;
-mytrait_test_suite!(my_tests, ConcreteType, 1, "hello".to_string());
-```
+Test methods may be static. If all test methods are static, there is no need to
+pass a `$test_instance` parameter to the generated macro.  Instances of the test
+suite type are not created for static test methods.
 
-If the "quickcheck" feature is enabled, quickcheck tests are also supported.  Consider this implementation of `TestSuite<T>`:
+### Abbreviated Signatures
 
-```rust
-#[test_suite_macro(mytrait_test_suite)]
-impl<T: MyTrait> TestSuite<T> {
-  #[quickcheck]
-  fn test_result_prop(data: MyTestData<T>) -> TestResult {
-    todo!("generate a TestResult")
-  }
+The `$test_type` parameter may be omitted when it is obvious from the
+`$test_instance` expression.  The type is considered obvious when the expression
+starts with the unqualified name of the test type, possibly followed by type arguments.
 
-  #[quickcheck]
-  fn boolean_prop(data: MyTestData<T>) -> bool {
-    todo!("generate a boolean result")
-  }
-}
-```
-
-The expansion looks like this:
-
-```rust
-impl<T: MyTrait> TestSuite<T> {
-  #[doc(hidden)]
-  pub fn test_result_prop(data: MyTestData<T>) -> TestResult {
-    todo!("generate a TestResult")
-  }
-
-  #[doc(hidden)]
-  pub fn boolean_prop(data: MyTestData<T>) -> bool {
-    todo!("generate a boolean result")
-  }
-}
-
-#[macro_export]
-macro_rules! mytrait_test_suite {
-  ($mod_name:ident, $T:ty) => {
-    mod $mod_name {
-      use super::*;
-
-      #[test]
-      pub fn test_result_prop() {
-        quickcheck::quickcheck(TestSuite::<$T>::test_result_prop as fn(_) -> _);
-      }
-
-
-      #[test]
-      pub fn boolean_prop() {
-        quickcheck::quickcheck(TestSuite::<$T>::boolean_prop as fn(_) -> _);
-      }
-    }
-  }
-}
-```
-
-Other than a `new` method and methods annotated with `#[test]` or `#[quickcheck]`, all methods are copied as-is to the result.
+The `$test_instance` paremeter may be omitted if the test suite type implments `Default`.

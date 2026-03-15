@@ -1,0 +1,7 @@
+error: test_suite_macro: the impl block must contain at least one #[test] or #[quickcheck] method
+ --> tests/ui/no_test_methods.rs:7:1
+  |
+7 | #[test_suite_macro(plain_suite)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `test_suite_macro` (in Nightly builds, run with -Z macro-backtrace for more info)

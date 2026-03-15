@@ -60,7 +60,6 @@ struct TestMethod {
     cfg_attrs: Vec<syn::Attribute>,
 }
 
-#[cfg(feature = "quickcheck")]
 struct QuickcheckMethod {
     name: Ident,
     /// Number of non-self parameters; used to build the `fn(_, ...) -> _` cast.
@@ -111,7 +110,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Walk the impl items, categorising and transforming each method.
     // ------------------------------------------------------------------
     let mut test_methods: Vec<TestMethod> = Vec::new();
-    #[cfg(feature = "quickcheck")]
     let mut quickcheck_methods: Vec<QuickcheckMethod> = Vec::new();
 
     for impl_item in &mut impl_block.items {
@@ -161,11 +159,8 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                 cfg_attrs,
             });
         } else if is_quickcheck {
-            #[cfg(feature = "quickcheck")]
-            {
-                let qm = build_quickcheck_method(method, &type_params);
-                quickcheck_methods.push(qm);
-            }
+            let qm = build_quickcheck_method(method, &type_params);
+            quickcheck_methods.push(qm);
             let _ = (&is_quickcheck, &method_name, &type_params);
         }
     }
@@ -175,13 +170,14 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // ------------------------------------------------------------------
     let has_test_methods = !test_methods.is_empty();
     let has_self_test_methods = test_methods.iter().any(|tm| tm.has_self);
-    #[cfg(feature = "quickcheck")]
     let has_quickcheck_methods = !quickcheck_methods.is_empty();
-    #[cfg(not(feature = "quickcheck"))]
-    let has_quickcheck_methods = false;
 
     if !has_test_methods && !has_quickcheck_methods {
-        return quote! { #impl_block }.into();
+        return quote! {
+            compile_error!("test_suite_macro: the impl block must contain at least one #[test] or #[quickcheck] method");
+            #impl_block
+        }
+        .into();
     }
 
     // ------------------------------------------------------------------
@@ -228,7 +224,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Each wrapper is a plain `#[test]` that calls `quickcheck::quickcheck`
     // with a function-pointer cast to drive shrinking and randomisation.
     // ------------------------------------------------------------------
-    #[cfg(feature = "quickcheck")]
     let quickcheck_fn_items: TokenStream2 = quickcheck_methods
         .iter()
         .map(|qm| {
@@ -256,8 +251,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         })
         .collect();
-    #[cfg(not(feature = "quickcheck"))]
-    let quickcheck_fn_items: TokenStream2 = TokenStream2::new();
 
     // ------------------------------------------------------------------
     // Build the macro_rules! arms.
@@ -355,10 +348,9 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------------
-// Quickcheck method builder (compiled only with the "quickcheck" feature)
+// Quickcheck method builder
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "quickcheck")]
 fn build_quickcheck_method(method: &syn::ImplItemFn, _type_params: &[Ident]) -> QuickcheckMethod {
     let name = method.sig.ident.clone();
     let arity = method

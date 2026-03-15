@@ -18,7 +18,6 @@ impl MyTrait for ConcreteType {
     }
 }
 
-#[cfg(feature = "quickcheck")]
 mod quickcheck_suite {
     use quickcheck::TestResult;
     use test_suite_macro::test_suite_macro;
@@ -44,14 +43,11 @@ mod quickcheck_suite {
     }
 }
 
-#[cfg(feature = "quickcheck")]
 use quickcheck_suite::MathSuite;
-#[cfg(feature = "quickcheck")]
 quickcheck_suite!(run_quickcheck_suite: MathSuite);
 
 // Generic quickcheck suite – mirrors the README's `TestSuite<T: MyTrait>` but
 // the property only exercises the type-param threading, not the trait itself.
-#[cfg(feature = "quickcheck")]
 mod generic_quickcheck_suite {
     use test_suite_macro::test_suite_macro;
 
@@ -71,7 +67,5 @@ mod generic_quickcheck_suite {
     }
 }
 
-#[cfg(feature = "quickcheck")]
 use generic_quickcheck_suite::GenericSuite;
-#[cfg(feature = "quickcheck")]
 generic_quickcheck_suite!(run_generic_quickcheck_suite: GenericSuite<ConcreteType>);

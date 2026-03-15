@@ -43,7 +43,6 @@ use cfg_suite::CfgSuite;
 cfg_suite!(run_cfg_suite: CfgSuite = CfgSuite);
 
 // Quickcheck variant: cfg on a #[quickcheck] method.
-#[cfg(feature = "quickcheck")]
 mod cfg_quickcheck_suite {
     use test_suite_macro::test_suite_macro;
 
@@ -60,7 +59,5 @@ mod cfg_quickcheck_suite {
     }
 }
 
-#[cfg(feature = "quickcheck")]
 use cfg_quickcheck_suite::CfgQcSuite;
-#[cfg(feature = "quickcheck")]
 cfg_quickcheck_suite!(run_cfg_quickcheck_suite: CfgQcSuite);

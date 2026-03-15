@@ -54,3 +54,7 @@ mod generic_suite {
 
 use generic_suite::GenericTestSuite;
 generic_suite!(run_for_concrete_type: GenericTestSuite<ConcreteType> = GenericTestSuite::new(42, "world".to_string()));
+generic_suite!(
+    run_for_concrete_type_abbreviated =
+        GenericTestSuite::<ConcreteType>::new(42, "world".to_string())
+);

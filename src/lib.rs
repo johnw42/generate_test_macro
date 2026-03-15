@@ -204,7 +204,8 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             let cfg_attrs = &tm.cfg_attrs;
             let call = if tm.has_self {
                 quote! {
-                    let instance : #dollar_type = #dollar_expr;
+                    #[allow(unused_mut)]
+                    let mut instance : #dollar_type = #dollar_expr;
                     instance . #name ();
                 }
             } else {

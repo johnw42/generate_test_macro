@@ -55,9 +55,10 @@ struct TestMethod {
     /// When `true` the generated wrapper calls `Struct::new(...).method()`;
     /// when `false` it calls `Struct::method()` directly.
     has_self: bool,
-    /// Any `#[cfg(...)]` attributes on the original method, propagated verbatim
-    /// onto the generated wrapper function.
-    cfg_attrs: Vec<syn::Attribute>,
+    /// Attributes from the original method that should be propagated verbatim
+    /// onto the generated wrapper function: `#[cfg(...)]`, `#[should_panic]`,
+    /// and `#[ignore]`.
+    extra_attrs: Vec<syn::Attribute>,
 }
 
 struct QuickcheckMethod {
@@ -123,6 +124,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Detect and strip special attributes.
         let mut is_test = false;
         let mut is_quickcheck = false;
+        let mut extra_attrs: Vec<syn::Attribute> = Vec::new();
         method.attrs.retain(|attr| {
             if attr.path().is_ident("test") {
                 is_test = true;
@@ -130,6 +132,15 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             } else if attr.path().is_ident("quickcheck") {
                 is_quickcheck = true;
                 false
+            } else if attr.path().is_ident("should_panic") || attr.path().is_ident("ignore") {
+                // Collect for propagation onto the generated #[test] wrapper,
+                // but strip from the inherent method to avoid an "unused
+                // attribute" compiler warning on the impl block.
+                extra_attrs.push(attr.clone());
+                false
+            } else if attr.path().is_ident("cfg") {
+                extra_attrs.push(attr.clone());
+                true
             } else {
                 true
             }
@@ -141,12 +152,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         if is_test {
-            let cfg_attrs = method
-                .attrs
-                .iter()
-                .filter(|a| a.path().is_ident("cfg"))
-                .cloned()
-                .collect();
             let has_self = method
                 .sig
                 .inputs
@@ -156,7 +161,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             test_methods.push(TestMethod {
                 name: method_name,
                 has_self,
-                cfg_attrs,
+                extra_attrs,
             });
         } else if is_quickcheck {
             let qm = build_quickcheck_method(method, &type_params);
@@ -197,7 +202,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .map(|tm| {
             let name = &tm.name;
-            let cfg_attrs = &tm.cfg_attrs;
+            let extra_attrs = &tm.extra_attrs;
             let call = if tm.has_self {
                 quote! {
                     #[allow(unused_mut)]
@@ -210,7 +215,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             };
             quote! {
-                #(#cfg_attrs)*
+                #(#extra_attrs)*
                 #[test]
                 fn #name () {
                     #call

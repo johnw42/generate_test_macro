@@ -1,0 +1,10 @@
+error: static_test_suite: type parameters for StaticSuite cannot be inferred; use the turbofish form instead
+  --> tests/ui/must_use_turbofish.rs:9:5
+   |
+ 9 |     #[test_suite_macro(static_test_suite)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+21 | static_test_suite!(with_instance = StaticSuite(0i32));
+   | ----------------------------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `static_test_suite` (in Nightly builds, run with -Z macro-backtrace for more info)

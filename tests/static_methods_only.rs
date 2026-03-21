@@ -10,8 +10,7 @@ mod static_test_suite {
 
     use test_suite_macro::test_suite_macro;
 
-    #[derive(Default)]
-    pub struct StaticSuite<T>(pub PhantomData<T>);
+    pub struct StaticSuite<T>(PhantomData<T>);
 
     #[test_suite_macro(static_test_suite)]
     impl<T> StaticSuite<T> {
@@ -24,14 +23,8 @@ mod static_test_suite {
         fn string_len() {
             assert_eq!("hello".len(), 5);
         }
-
-        #[test]
-        fn not_static(&self) {}
     }
 }
 
-use std::marker::PhantomData;
-
 use static_test_suite::StaticSuite;
-static_test_suite!(with_type: StaticSuite<i32>);
-static_test_suite!(with_instance = StaticSuite::<i32>(PhantomData));
+static_test_suite!(run_static_test_suite: StaticSuite<i32>);

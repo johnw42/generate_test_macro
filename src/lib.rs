@@ -276,42 +276,53 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     //   • plain abbrev:   ($mod_name:ident = StructName rest...)
     //                       → infers type from expression
     // ------------------------------------------------------------------
-    let macro_name_str = macro_name.to_string();
-    let struct_name_str = struct_name.to_string();
-
     let (main_pat, supporting_arms) = if has_self_test_methods {
         let pat = quote! {
             #dollar_mod_name : ident : #dollar_type : ty = #dollar_expr : expr
         };
 
         // Default arm: omit expr, construct via Default::default().
-        let default_arm: TokenStream2 = format!(
-            "($mod_name:ident : $type:ty) => \
-             {{ {n}!($mod_name : $type = <$type as ::core::default::Default>::default()); }};",
-            n = macro_name_str
-        )
-        .parse()
-        .expect("test_suite_macro: default arm parse failed");
+        let default_arm = quote! {
+            ($mod_name:ident : $type:ty) => {
+                #macro_name!($mod_name : $type = <$type as ::core::default::Default>::default());
+            };
+        };
 
         // Abbreviated turbofish arm: infer type from StructName::<T, …> expr.
-        let turbofish_arm: TokenStream2 = format!(
-            "($mod_name:ident = {s} :: <$($tparam:ty),*> $($rest:tt)*) => \
-             {{ {n}!($mod_name : {s}<$($tparam),*> = {s}::<$($tparam),*> $($rest)*); }};",
-            s = struct_name_str,
-            n = macro_name_str
-        )
-        .parse()
-        .expect("test_suite_macro: turbofish arm parse failed");
+        let turbofish_arm = quote! {
+            ($mod_name:ident = #struct_name :: <$($tparam:ty),* $(,)?> $($rest:tt)*) => {
+                #macro_name!($mod_name : #struct_name<$($tparam),*> = #struct_name::<$($tparam),*> $($rest)*);
+            };
+        };
 
         // Abbreviated plain arm: infer type from StructName expr.
-        let plain_arm: TokenStream2 = format!(
-            "($mod_name:ident = {s} $($rest:tt)*) => \
-             {{ {n}!($mod_name : {s} = {s} $($rest)*); }};",
-            s = struct_name_str,
-            n = macro_name_str
-        )
-        .parse()
-        .expect("test_suite_macro: plain abbreviated arm parse failed");
+        let has_static_test_methods =
+            test_methods.iter().any(|tm| !tm.has_self) || !quickcheck_methods.is_empty();
+        let plain_arm: TokenStream2 = if type_params.is_empty() || !has_static_test_methods {
+            let wildcard_params = if type_params.is_empty() {
+                quote! {}
+            } else {
+                let wildcards = type_params
+                    .iter()
+                    .map(|_| quote! { _ })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .fold(quote! {}, |acc, wc| quote! { #acc #wc });
+                quote! { < #wildcards > }
+            };
+            quote! {
+                ($mod_name:ident = #struct_name $($rest:tt)*) => {
+                    #macro_name!($mod_name : #struct_name #wildcard_params = #struct_name $($rest)*);
+                };
+            }
+        } else {
+            quote! {
+                ($mod_name:ident = #struct_name $($rest:tt)*) => {
+                    compile_error!(concat!(stringify!(#macro_name), ": type parameters for ",
+                     stringify!(#struct_name), " cannot be inferred; use the turbofish form instead"));
+                };
+            }
+        };
 
         let arms = quote! {
             #default_arm

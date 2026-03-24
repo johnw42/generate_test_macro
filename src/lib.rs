@@ -147,7 +147,8 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         if is_test || is_quickcheck {
             method.vis = Visibility::Public(Default::default());
-            method.attrs.insert(0, parse_quote!(#[doc(hidden)]));
+            method.attrs.push(parse_quote!(#[doc(hidden)]));
+            method.attrs.push(parse_quote!(#[inline(never)]));
         }
 
         if is_test {
@@ -303,10 +304,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             } else {
                 let wildcards = type_params
                     .iter()
-                    .map(|_| quote! { _ })
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .fold(quote! {}, |acc, wc| quote! { #acc #wc });
+                    .fold(quote! {}, |acc, _| quote! { #acc _, });
                 quote! { < #wildcards > }
             };
             quote! {

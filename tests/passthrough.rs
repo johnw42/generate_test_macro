@@ -8,15 +8,11 @@ mod passthrough_suite {
     use test_suite_macro::test_suite_macro;
 
     pub struct Suite {
-        value: usize,
+        pub value: usize,
     }
 
     #[test_suite_macro(passthrough_suite)]
     impl Suite {
-        fn new(value: usize) -> Self {
-            Self { value }
-        }
-
         // Plain helper – should be copied without modification (not made pub).
         fn doubled(&self) -> usize {
             self.value * 2
@@ -30,4 +26,4 @@ mod passthrough_suite {
 }
 
 use passthrough_suite::Suite;
-passthrough_suite!(run_passthrough_suite: Suite = Suite::new(42));
+passthrough_suite!(run_passthrough_suite: Suite = Suite { value: 42 });

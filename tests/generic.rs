@@ -32,7 +32,7 @@ mod generic_suite {
 
     #[test_suite_macro(generic_suite)]
     impl<T: MyTrait> GenericTestSuite<T> {
-        fn new(param1: usize, param2: String) -> Self {
+        pub fn new(param1: usize, param2: String) -> Self {
             Self {
                 param1,
                 param2,

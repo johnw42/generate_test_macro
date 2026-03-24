@@ -12,7 +12,7 @@ mod mixed_suite {
 
     #[test_suite_macro(mixed_suite)]
     impl MixedSuite {
-        fn new(value: usize) -> Self {
+        pub fn new(value: usize) -> Self {
             Self { value }
         }
 

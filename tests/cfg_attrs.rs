@@ -12,10 +12,6 @@ mod cfg_suite {
 
     #[test_suite_macro(cfg_suite)]
     impl CfgSuite {
-        fn new() -> Self {
-            Self
-        }
-
         // This wrapper must only exist (and run) on 64-bit targets.
         // If the #[cfg] were not propagated to the wrapper, this would fail to
         // compile on 32-bit targets because `CfgSuite::only_on_64bit` wouldn't

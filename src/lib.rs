@@ -119,7 +119,6 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
 
         let method_name = method.sig.ident.clone();
-        let is_new = method_name == "new";
 
         // Detect and strip special attributes.
         let mut is_test = false;
@@ -146,7 +145,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         });
 
-        if is_new || is_test || is_quickcheck {
+        if is_test || is_quickcheck {
             method.vis = Visibility::Public(Default::default());
             method.attrs.insert(0, parse_quote!(#[doc(hidden)]));
         }

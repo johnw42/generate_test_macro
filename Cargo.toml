@@ -1,6 +1,6 @@
 [package]
 name = "test_suite_macro"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "A proc macro for writing test suites as methods on a struct, generating a macro_rules! macro to instantiate each test individually."
 license = "MIT OR Apache-2.0"

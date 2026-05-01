@@ -1,9 +1,9 @@
 [package]
-name = "test_suite_macro"
+name = "generate_test_macro"
 version = "0.1.1"
 edition = "2021"
 description = "A proc macro for writing test suites as methods on a struct, generating a macro_rules! macro to instantiate each test individually."
-repository = "https://github.com/username/test_suite_macro"
+repository = "https://github.com/username/generate_test_macro"
 license = "MIT OR Apache-2.0"
 
 [lib]

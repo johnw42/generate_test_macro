@@ -1,19 +1,8 @@
-//! A proc macro for writing a suite of unit tests as methods on a struct.
-//!
-//! Attach `#[test_suite_macro(name)]` to an `impl` block to produce:
-//!
-//! 1. The same `impl` block with `new`, `#[test]`, and `#[quickcheck]` methods
-//!    made `pub` / `#[doc(hidden)]` (and their special attributes stripped).
-//! 2. A `macro_rules! name { … }` that, when invoked with a module name,
-//!    concrete type arguments, and (if needed) constructor arguments, creates
-//!    an isolated test module.
-//!
-//! See the project README for full examples.
-
+#![doc = include_str!("../README.md")]
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::{FnArg, ImplItem, ItemImpl, Visibility, parse_macro_input, parse_quote};
+use syn::{parse_macro_input, parse_quote, FnArg, ImplItem, ItemImpl, Visibility};
 
 // ---------------------------------------------------------------------------
 // Token-stream helpers

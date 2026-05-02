@@ -6,11 +6,11 @@
 //   • Multiple `#[test]` methods all appear in the generated module
 
 mod basic_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     pub struct TestSuite;
 
-    #[test_suite_macro(basic_suite)]
+    #[generate_test_macro(basic_suite)]
     impl TestSuite {
         #[test]
         #[should_panic]

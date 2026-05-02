@@ -27,10 +27,10 @@ fn extract_struct_name(ty: &syn::Type) -> Ident {
             .path
             .segments
             .last()
-            .expect("test_suite_macro: expected at least one path segment in self type")
+            .expect("generate_test_macro: expected at least one path segment in self type")
             .ident
             .clone(),
-        _ => panic!("test_suite_macro: self type must be a path (e.g. `Struct<T>`)"),
+        _ => panic!("generate_test_macro: self type must be a path (e.g. `Struct<T>`)"),
     }
 }
 
@@ -68,7 +68,7 @@ struct QuickcheckMethod {
 /// # Example
 ///
 /// ```rust,ignore
-/// #[test_suite_macro(my_suite_tests)]
+/// #[generate_test_macro(my_suite_tests)]
 /// impl<T: MyTrait> MySuite<T> {
 ///     fn new(arg: usize) -> Self { Self { arg } }
 ///
@@ -81,7 +81,7 @@ struct QuickcheckMethod {
 /// my_suite_tests!(for_concrete_impl, ConcreteType, 42);
 /// ```
 #[proc_macro_attribute]
-pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let macro_name = parse_macro_input!(attr as Ident);
     let mut impl_block = parse_macro_input!(item as ItemImpl);
 
@@ -168,7 +168,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     if !has_test_methods && !has_quickcheck_methods {
         return quote! {
-            compile_error!("test_suite_macro: the impl block must contain at least one #[test] or #[quickcheck] method");
+            compile_error!("generate_test_macro: the impl block must contain at least one #[test] or #[quickcheck] method");
             #impl_block
         }
         .into();
@@ -347,6 +347,15 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         #macro_rules_def
     }
     .into()
+}
+
+#[deprecated(
+    since = "0.1.2",
+    note = "The `#[test_suite_macro]` attribute is now named `#[generate_test_macro]`"
+)]
+#[proc_macro_attribute]
+pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
+    generate_test_macro(attr, item)
 }
 
 // ---------------------------------------------------------------------------

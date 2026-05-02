@@ -6,11 +6,11 @@
 // condition available in every build.
 
 mod cfg_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     pub struct CfgSuite;
 
-    #[test_suite_macro(cfg_suite)]
+    #[generate_test_macro(cfg_suite)]
     impl CfgSuite {
         // This wrapper must only exist (and run) on 64-bit targets.
         // If the #[cfg] were not propagated to the wrapper, this would fail to
@@ -40,11 +40,11 @@ cfg_suite!(run_cfg_suite: CfgSuite = CfgSuite);
 
 // Quickcheck variant: cfg on a #[quickcheck] method.
 mod cfg_quickcheck_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     pub struct CfgQcSuite;
 
-    #[test_suite_macro(cfg_quickcheck_suite)]
+    #[generate_test_macro(cfg_quickcheck_suite)]
     impl CfgQcSuite {
         #[quickcheck]
         #[cfg(target_pointer_width = "64")]

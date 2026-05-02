@@ -5,13 +5,13 @@
 // Verify that a plain helper method is accessible and works correctly.
 
 mod passthrough_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     pub struct Suite {
         pub value: usize,
     }
 
-    #[test_suite_macro(passthrough_suite)]
+    #[generate_test_macro(passthrough_suite)]
     impl Suite {
         // Plain helper – should be copied without modification (not made pub).
         fn doubled(&self) -> usize {

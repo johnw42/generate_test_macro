@@ -8,12 +8,12 @@
 mod static_test_suite {
     use std::marker::PhantomData;
 
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     #[derive(Default)]
     pub struct StaticSuite<T>(pub PhantomData<T>);
 
-    #[test_suite_macro(static_test_suite)]
+    #[generate_test_macro(static_test_suite)]
     impl<T> StaticSuite<T> {
         // No `new` needed – none of the tests take self.
 

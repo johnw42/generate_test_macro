@@ -4,13 +4,13 @@
 // macro pattern.  Tests without self should still compile and run correctly.
 
 mod mixed_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     pub struct MixedSuite {
         value: usize,
     }
 
-    #[test_suite_macro(mixed_suite)]
+    #[generate_test_macro(mixed_suite)]
     impl MixedSuite {
         pub fn new(value: usize) -> Self {
             Self { value }

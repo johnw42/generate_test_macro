@@ -16,7 +16,7 @@ Attach `#[generate_test_macro(name)]` to an `impl` block to produce:
 To define a type as a test suite, use the `generate_test_macro` in a `impl` block, passing the name of the new macro to be generated.
 The `impl` block should contain methods annotated with `#[test]`:
 
-```rust
+```rust,ignore
 struct ExampleSuite<T> {...}
 
 #[generate_test_macro(example_suite)]
@@ -30,20 +30,20 @@ This generates a new macro which generates a package containing a `#[test]`
 function for each `#[test]` method of the type.  This calling convention of the
 macro is
 
-```rust
+```rust,ignore
 example_suite($package_name: $test_type = $test_instance);
 ```
 
 For example, invoking the macro like this
 
-```rust
+```rust,ignore
 example_suite(test1: ExampleSuite<i32> = ExampleSuite {...});
 
 ```
 
 will expand (roughly) to this module definition:
 
-```rust
+```rust,ignore
 mod test1 {
   use super::*;
 

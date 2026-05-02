@@ -6,14 +6,14 @@
 //   • Multiple `#[test]` methods all appear in the generated module
 
 mod basic_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     pub struct TestSuite<T: ToString> {
         pub param1: usize,
         pub param2: T,
     }
 
-    #[test_suite_macro(basic_suite)]
+    #[generate_test_macro(basic_suite)]
     impl<T: ToString> TestSuite<T> {
         pub fn new(param1: usize, param2: T) -> Self {
             Self { param1, param2 }

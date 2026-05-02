@@ -1,10 +1,10 @@
-use test_suite_macro::test_suite_macro;
+use generate_test_macro::generate_test_macro;
 
 struct Plain {
     pub x: usize,
 }
 
-#[test_suite_macro(plain_suite)]
+#[generate_test_macro(plain_suite)]
 impl Plain {
     pub fn helper(&self) -> usize {
         self.x + 1

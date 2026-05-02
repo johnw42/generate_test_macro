@@ -1,4 +1,4 @@
-// Compile-fail tests for test_suite_macro error diagnostics.
+// Compile-fail tests for generate_test_macro error diagnostics.
 //
 // Each file in tests/ui/ must have a corresponding .stderr snapshot.
 // Run `TRYBUILD=overwrite cargo test` to (re)generate them.

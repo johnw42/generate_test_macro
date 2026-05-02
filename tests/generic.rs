@@ -20,7 +20,7 @@ impl MyTrait for ConcreteType {
 }
 
 mod generic_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     use super::MyTrait;
 
@@ -30,7 +30,7 @@ mod generic_suite {
         _marker: std::marker::PhantomData<T>,
     }
 
-    #[test_suite_macro(generic_suite)]
+    #[generate_test_macro(generic_suite)]
     impl<T: MyTrait> GenericTestSuite<T> {
         pub fn new(param1: usize, param2: String) -> Self {
             Self {

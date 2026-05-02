@@ -19,12 +19,12 @@ impl MyTrait for ConcreteType {
 }
 
 mod quickcheck_suite {
+    use generate_test_macro::generate_test_macro;
     use quickcheck::TestResult;
-    use test_suite_macro::test_suite_macro;
 
     pub struct MathSuite;
 
-    #[test_suite_macro(quickcheck_suite)]
+    #[generate_test_macro(quickcheck_suite)]
     impl MathSuite {
         /// Addition is commutative for all u32 pairs.
         #[quickcheck]
@@ -49,7 +49,7 @@ quickcheck_suite!(run_quickcheck_suite: MathSuite);
 // Generic quickcheck suite – mirrors the README's `TestSuite<T: MyTrait>` but
 // the property only exercises the type-param threading, not the trait itself.
 mod generic_quickcheck_suite {
-    use test_suite_macro::test_suite_macro;
+    use generate_test_macro::generate_test_macro;
 
     use super::MyTrait;
 
@@ -57,7 +57,7 @@ mod generic_quickcheck_suite {
         _marker: std::marker::PhantomData<T>,
     }
 
-    #[test_suite_macro(generic_quickcheck_suite)]
+    #[generate_test_macro(generic_quickcheck_suite)]
     impl<T: MyTrait + 'static> GenericSuite<T> {
         /// Multiplying any u32 by 1 is an identity operation.
         #[quickcheck]

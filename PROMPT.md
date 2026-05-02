@@ -11,7 +11,7 @@ pub struct TestSuite<T> {
   param2: String,
 }
 
-#[test_suite_macro(mytrait_test_suite)]
+#[generate_test_macro(mytrait_test_suite)]
 impl<T: MyTrait> TestSuite<T> {
   fn new(param1: usize, param2: String) -> Self {
     Self { param1, param2 }
@@ -67,7 +67,7 @@ mytrait_test_suite!(my_tests, ConcreteType, 1, "hello".to_string());
 If the "quickcheck" feature is enabled, quickcheck tests are also supported.  Consider this implementation of `TestSuite<T>`:
 
 ```rust
-#[test_suite_macro(mytrait_test_suite)]
+#[generate_test_macro(mytrait_test_suite)]
 impl<T: MyTrait> TestSuite<T> {
   #[quickcheck]
   fn test_result_prop(data: MyTestData<T>) -> TestResult {

@@ -186,7 +186,12 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
     // If there is nothing to generate, just return the transformed impl.
     // ------------------------------------------------------------------
     let has_test_methods = !test_methods.is_empty();
-    let has_self_test_methods = test_methods.iter().any(|tm| tm.has_self);
+    let has_self_test_methods = test_methods.iter().any(|tm| tm.has_self)
+        || proptest_methods.iter().any(|pm| {
+            pm.args
+                .first()
+                .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)))
+        });
     let has_quickcheck_methods = !quickcheck_methods.is_empty();
     let has_proptest_methods = !proptest_methods.is_empty();
 
@@ -275,16 +280,60 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
         .map(|pm| {
             let name = &pm.name;
             let cfg_attrs = &pm.cfg_attrs;
-            let args = pm
+            let has_self = pm
+                .args
+                .first()
+                .is_some_and(|arg| matches!(arg, syn::FnArg::Receiver(_)));
+            let call_args: Punctuated<Ident, syn::Token![,]> = pm
                 .args
                 .iter()
-                .cloned()
-                .collect::<Punctuated<FnArg, syn::Token![,]>>();
+                .filter(|arg| matches!(arg, FnArg::Typed(_)))
+                .enumerate()
+                .map(|(i, _)| Ident::new(&format!("a{i}"), Span::call_site()))
+                .collect();
+            let mut strategy_args: Punctuated<TokenStream2, syn::Token![,]> = pm
+                .args
+                .iter()
+                .filter_map(|arg| match arg {
+                    FnArg::Typed(arg) => Some(arg),
+                    FnArg::Receiver(_) => None,
+                })
+                .zip(call_args.iter())
+                .map(|(arg, name)| {
+                    let strategy = match &*arg.pat {
+                        Pat::Ident(pat) => pm.param_exprs.get(&pat.ident.to_string()),
+                        _ => None,
+                    };
+                    if let Some(strategy) = strategy {
+                        quote!(#name in #strategy)
+                    } else {
+                        let ty = &arg.ty;
+                        quote!(#name: #ty)
+                    }
+                })
+                .collect();
+            // proptest! requires at least one strategy, even for receiver-only methods.
+            if strategy_args.is_empty() {
+                strategy_args.push(quote!(_ in ::proptest::strategy::Just(())));
+            }
+            let call = if has_self {
+                quote! {
+                    #[allow(unused_mut)]
+                    let mut instance : #dollar_type = #dollar_expr;
+                    instance . #name (#call_args)?;
+                }
+            } else {
+                quote! {
+                    < #dollar_type > :: #name (#call_args)?;
+                }
+            };
             quote! {
-                #(#cfg_attrs)*
-                #[test]
-                fn #name(#args) {
-                    todo!();
+                ::proptest::proptest! {
+                    #(#cfg_attrs)*
+                    #[test]
+                    fn #name(#strategy_args) {
+                        #call
+                    }
                 }
             }
         })
@@ -329,8 +378,13 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
         };
 
         // Abbreviated plain arm: infer type from StructName expr.
-        let has_static_test_methods =
-            test_methods.iter().any(|tm| !tm.has_self) || !quickcheck_methods.is_empty();
+        let has_static_test_methods = test_methods.iter().any(|tm| !tm.has_self)
+            || !quickcheck_methods.is_empty()
+            || proptest_methods.iter().any(|pm| {
+                !pm.args
+                    .first()
+                    .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)))
+            });
         let plain_arm: TokenStream2 = if type_params.is_empty() || !has_static_test_methods {
             let wildcard_params = if type_params.is_empty() {
                 quote! {}
@@ -381,6 +435,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                     use super::*;
                     #test_fn_items
                     #quickcheck_fn_items
+                    #proptest_fn_items
                 }
             }
         }
@@ -428,11 +483,27 @@ fn build_quickcheck_method(method: &syn::ImplItemFn) -> QuickcheckMethod {
 }
 
 fn build_proptest_method(
-    method: &syn::ImplItemFn,
+    method: &mut syn::ImplItemFn,
     proptest_attr: syn::Attribute,
 ) -> Result<ProptestMethod, TokenStream> {
+    if let syn::ReturnType::Type(..) = &method.sig.output {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "generate_test_macro: #[proptest] methods must not specify a return type",
+        )
+        .to_compile_error()
+        .into());
+    }
     let name = method.sig.ident.clone();
     let param_exprs = parse_proptest_attr(proptest_attr)?;
+    method.sig.output = parse_quote!(-> ::proptest::test_runner::TestCaseResult);
+    if let Some(syn::Stmt::Expr(_, semi)) = method.block.stmts.last_mut() {
+        *semi = Some(Default::default());
+    }
+    method
+        .block
+        .stmts
+        .push(syn::Stmt::Expr(parse_quote!(Ok(())), None));
     let cfg_attrs = method
         .attrs
         .iter()

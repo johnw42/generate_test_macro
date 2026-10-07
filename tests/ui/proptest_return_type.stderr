@@ -1,0 +1,17 @@
+error: generate_test_macro: #[proptest] methods must not specify a return type
+ --> tests/ui/proptest_return_type.rs:8:29
+  |
+8 |     fn property(value: u32) -> bool {
+  |                             ^^^^^^^
+
+error: generate_test_macro: #[proptest] methods must not specify a return type
+  --> tests/ui/proptest_return_type.rs:18:19
+   |
+18 |     fn property() -> () {}
+   |                   ^^^^^
+
+error: generate_test_macro: #[proptest] methods must not specify a return type
+  --> tests/ui/proptest_return_type.rs:26:19
+   |
+26 |     fn property() -> proptest::test_runner::TestCaseResult {
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

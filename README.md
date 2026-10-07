@@ -65,6 +65,23 @@ In addition to methods marked as `#[test]`, methods can be marked with
 on `quickcheck`.  Note that `#[quickcheck]` methods cannot take a `self`
 parameter due to limitations of `quickcheck`.
 
+### Proptest Method Translation
+
+Methods marked with `#[proptest(...)]` or bare `#[proptest]` are translated
+to return `proptest::test_runner::TestCaseResult`. These methods must omit
+the return type; any explicit return type, including `-> ()`, is a compile-time
+error. The macro appends `Ok(())`
+to the method body, treating any original tail expression as a statement.
+This allows `prop_assert!`, `prop_assert_eq!`, and `prop_assume!` to return
+failures or rejections from the method. Explicit early returns must be
+compatible with `TestCaseResult`.
+
+Arguments to the `#[proptest(...)]` trait must be in the form `$parameter in $strategy`,
+as accepted by `#[test]` functions defined inside a `proptest! { ... }` block.
+Each parameter must correspond to a parameter of the method.  Parameters without an
+explicit strategy are emitted as `argument: Type`, letting `proptest!` supply
+the default arbitrary strategy.
+
 ### The `self` Parameter
 
 The `self` parameter of test methods may be passed by value, reference, or mut

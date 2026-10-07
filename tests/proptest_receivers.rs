@@ -35,6 +35,28 @@ impl ReceiverSuite {
     fn static_property(value: u32) {
         proptest::prop_assert!((1..10).contains(&value));
     }
+
+    #[proptest(__instance in 1u32..10)]
+    fn receiver_name_collision(&self, __instance: u32) {
+        proptest::prop_assert!(!self.changed);
+        proptest::prop_assert!((1..10).contains(&__instance));
+    }
+
+    #[proptest(value in 1u32..10)]
+    fn mutable_parameter(&self, mut value: u32) {
+        value += 1;
+        proptest::prop_assert!((2..11).contains(&value));
+    }
+
+    #[proptest]
+    fn reference_parameter(ref value: u32) {
+        proptest::prop_assert_eq!(*value, value.wrapping_add(0));
+    }
+
+    #[proptest(pair in (1u32..10, 1u32..10))]
+    fn binding_parameter(pair @ (left, right): (u32, u32)) {
+        proptest::prop_assert_eq!(pair, (left, right));
+    }
 }
 
 receiver_suite!(explicit: ReceiverSuite = ReceiverSuite { changed: false });

@@ -1,10 +1,12 @@
+# generate_test_macro
+
 A proc macro for writing a suite of unit tests as methods on a struct.  This is
 useful for running the same suite of tests on multiple instances of the struct,
 especially when testing multiple implementations of a trait.
 
 Attach `#[generate_test_macro(name)]` to an `impl` block to produce:
 
-1. The same `impl` block with `#[test]`, and `#[quickcheck]` methods
+1. The same `impl` block with `#[test]`, `#[quickcheck]`, and `#[propcheck]` methods
    made `pub` / `#[doc(hidden)]` (and their special attributes stripped).
 2. A `macro_rules! name { … }` definition that, when invoked with a module name,
    concrete type arguments, and a constructor expression, creates an isolated
@@ -67,13 +69,11 @@ parameter due to limitations of `quickcheck`.
 
 ### Proptest Method Translation
 
-Methods marked with `#[proptest(...)]` or bare `#[proptest]` are translated
-to return `proptest::test_runner::TestCaseResult`. These methods must omit
-the return type; any explicit return type, including `-> ()`, is a compile-time
-error. The macro appends `Ok(())`
-to the method body, treating any original tail expression as a statement.
-This allows `prop_assert!`, `prop_assert_eq!`, and `prop_assume!` to return
-failures or rejections from the method. Explicit early returns must be
+Methods marked with `#[proptest(...)]` or bare `#[proptest]` are translated to
+return `proptest::test_runner::TestCaseResult`; these methods must omit the
+return type to the method body, treating any original tail expression as a
+statement.  This allows `prop_assert!`, `prop_assert_eq!`, and `prop_assume!` to
+return failures or rejections from the method. Explicit early returns must be
 compatible with `TestCaseResult`.
 
 Arguments to the `#[proptest(...)]` trait must be in the form `$parameter in $strategy`,

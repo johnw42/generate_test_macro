@@ -1,0 +1,11 @@
+error: generate_test_macro: #[proptest] method parameters must have an outer identifier binding
+ --> tests/ui/proptest_parameter_patterns.rs:8:14
+  |
+8 |     fn tuple((a, b): (u32, u32)) {}
+  |              ^^^^^^
+
+error: generate_test_macro: #[proptest] method parameters must have an outer identifier binding
+  --> tests/ui/proptest_parameter_patterns.rs:14:17
+   |
+14 |     fn wildcard(_: u32) {}
+   |                 ^

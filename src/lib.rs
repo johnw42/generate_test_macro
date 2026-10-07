@@ -67,10 +67,43 @@ struct QuickcheckMethod {
 struct ProptestMethod {
     name: Ident,
     args: Vec<syn::FnArg>,
+    param_names: Vec<Ident>,
     param_exprs: HashMap<String, syn::Expr>,
     /// Any `#[cfg(...)]` attributes on the original method, propagated verbatim
     /// onto the generated wrapper function.
     cfg_attrs: Vec<syn::Attribute>,
+}
+
+impl ProptestMethod {
+    fn has_self(&self) -> bool {
+        self.args
+            .first()
+            .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)))
+    }
+}
+
+#[derive(Default)]
+struct TestMethods {
+    tests: Vec<TestMethod>,
+    quickchecks: Vec<QuickcheckMethod>,
+    proptests: Vec<ProptestMethod>,
+}
+
+impl TestMethods {
+    fn is_empty(&self) -> bool {
+        self.tests.is_empty() && self.quickchecks.is_empty() && self.proptests.is_empty()
+    }
+
+    fn has_self(&self) -> bool {
+        self.tests.iter().any(|method| method.has_self)
+            || self.proptests.iter().any(ProptestMethod::has_self)
+    }
+
+    fn has_static(&self) -> bool {
+        self.tests.iter().any(|method| !method.has_self)
+            || !self.quickchecks.is_empty()
+            || self.proptests.iter().any(|method| !method.has_self())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,23 +132,30 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
     let macro_name = parse_macro_input!(attr as Ident);
     let mut impl_block = parse_macro_input!(item as ItemImpl);
 
-    // ------------------------------------------------------------------
-    // Collect generic type-parameter names (e.g. `T` in `impl<T: Trait>`).
-    // ------------------------------------------------------------------
-    let type_params: Vec<Ident> = impl_block
-        .generics
-        .type_params()
-        .map(|tp| tp.ident.clone())
-        .collect();
-
     let struct_name = extract_struct_name(&impl_block.self_ty);
+    let methods = match collect_test_methods(&mut impl_block) {
+        Ok(methods) => methods,
+        Err(error) => return error,
+    };
 
-    // ------------------------------------------------------------------
-    // Walk the impl items, categorising and transforming each method.
-    // ------------------------------------------------------------------
-    let mut test_methods: Vec<TestMethod> = Vec::new();
-    let mut quickcheck_methods: Vec<QuickcheckMethod> = Vec::new();
-    let mut proptest_methods: Vec<ProptestMethod> = Vec::new();
+    if methods.is_empty() {
+        return quote! {
+            compile_error!("generate_test_macro: the impl block must contain at least one #[test], #[quickcheck], or #[proptest] method");
+            #impl_block
+        }
+        .into();
+    }
+
+    let macro_rules_def = generate_macro_rules(&macro_name, &struct_name, &impl_block, &methods);
+    quote! {
+        #impl_block
+        #macro_rules_def
+    }
+    .into()
+}
+
+fn collect_test_methods(impl_block: &mut ItemImpl) -> Result<TestMethods, TokenStream> {
+    let mut methods = TestMethods::default();
 
     for impl_item in &mut impl_block.items {
         let ImplItem::Fn(method) = impl_item else {
@@ -166,57 +206,26 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 .first()
                 .map(|arg| matches!(arg, FnArg::Receiver(_)))
                 .unwrap_or(false);
-            test_methods.push(TestMethod {
+            methods.tests.push(TestMethod {
                 name: method_name,
                 has_self,
                 extra_attrs,
             });
         } else if is_quickcheck {
             let qm = build_quickcheck_method(method);
-            quickcheck_methods.push(qm);
+            methods.quickchecks.push(qm);
         } else if let Some(attr) = proptest_attr {
-            match build_proptest_method(method, attr) {
-                Ok(pm) => proptest_methods.push(pm),
-                Err(error) => return error,
-            }
+            methods.proptests.push(build_proptest_method(method, attr)?);
         }
     }
 
-    // ------------------------------------------------------------------
-    // If there is nothing to generate, just return the transformed impl.
-    // ------------------------------------------------------------------
-    let has_test_methods = !test_methods.is_empty();
-    let has_self_test_methods = test_methods.iter().any(|tm| tm.has_self)
-        || proptest_methods.iter().any(|pm| {
-            pm.args
-                .first()
-                .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)))
-        });
-    let has_quickcheck_methods = !quickcheck_methods.is_empty();
-    let has_proptest_methods = !proptest_methods.is_empty();
+    Ok(methods)
+}
 
-    if !has_test_methods && !has_quickcheck_methods && !has_proptest_methods {
-        return quote! {
-            compile_error!("generate_test_macro: the impl block must contain at least one #[test], #[quickcheck], or #[proptest] method");
-            #impl_block
-        }
-        .into();
-    }
-
-    // ------------------------------------------------------------------
-    // Dollar-metavariable helpers used inside the generated macro body.
-    // ------------------------------------------------------------------
-    let dollar_mod_name = dollar_ident("mod_name");
+fn generate_test_wrappers(test_methods: &[TestMethod]) -> TokenStream2 {
     let dollar_type = dollar_ident("type");
     let dollar_expr = dollar_ident("expr");
-
-    // ------------------------------------------------------------------
-    // Emit `#[test]` wrappers.
-    //
-    // Each wrapper references $type (and $expr for instance methods), which
-    // are macro metavariables supplied by the caller at invocation time.
-    // ------------------------------------------------------------------
-    let test_fn_items: TokenStream2 = test_methods
+    test_methods
         .iter()
         .map(|tm| {
             let name = &tm.name;
@@ -240,14 +249,12 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 }
             }
         })
-        .collect();
+        .collect()
+}
 
-    // ------------------------------------------------------------------
-    // Emit `#[quickcheck]` wrappers (only populated when feature is active).
-    // Each wrapper is a plain `#[test]` that calls `quickcheck::quickcheck`
-    // with a function-pointer cast to drive shrinking and randomisation.
-    // ------------------------------------------------------------------
-    let quickcheck_fn_items: TokenStream2 = quickcheck_methods
+fn generate_quickcheck_wrappers(quickcheck_methods: &[QuickcheckMethod]) -> TokenStream2 {
+    let dollar_type = dollar_ident("type");
+    quickcheck_methods
         .iter()
         .map(|qm| {
             let name = &qm.name;
@@ -273,24 +280,19 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 }
             }
         })
-        .collect();
+        .collect()
+}
 
-    let proptest_fn_items: TokenStream2 = proptest_methods
+fn generate_proptest_wrappers(proptest_methods: &[ProptestMethod]) -> TokenStream2 {
+    let dollar_type = dollar_ident("type");
+    let dollar_expr = dollar_ident("expr");
+    proptest_methods
         .iter()
         .map(|pm| {
             let name = &pm.name;
             let cfg_attrs = &pm.cfg_attrs;
-            let has_self = pm
-                .args
-                .first()
-                .is_some_and(|arg| matches!(arg, syn::FnArg::Receiver(_)));
-            let call_args: Punctuated<Ident, syn::Token![,]> = pm
-                .args
-                .iter()
-                .filter(|arg| matches!(arg, FnArg::Typed(_)))
-                .enumerate()
-                .map(|(i, _)| Ident::new(&format!("a{i}"), Span::call_site()))
-                .collect();
+            let call_args: Punctuated<Ident, syn::Token![,]> =
+                pm.param_names.iter().cloned().collect();
             let mut strategy_args: Punctuated<TokenStream2, syn::Token![,]> = pm
                 .args
                 .iter()
@@ -300,10 +302,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 })
                 .zip(call_args.iter())
                 .map(|(arg, name)| {
-                    let strategy = match &*arg.pat {
-                        Pat::Ident(pat) => pm.param_exprs.get(&pat.ident.to_string()),
-                        _ => None,
-                    };
+                    let strategy = pm.param_exprs.get(&name.to_string());
                     if let Some(strategy) = strategy {
                         quote!(#name in #strategy)
                     } else {
@@ -316,11 +315,12 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
             if strategy_args.is_empty() {
                 strategy_args.push(quote!(_ in ::proptest::strategy::Just(())));
             }
-            let call = if has_self {
+            let call = if pm.has_self() {
+                let instance = Ident::new("__instance", Span::mixed_site());
                 quote! {
                     #[allow(unused_mut)]
-                    let mut instance : #dollar_type = #dollar_expr;
-                    instance . #name (#call_args)?;
+                    let mut #instance : #dollar_type = #dollar_expr;
+                    #instance . #name (#call_args)?;
                 }
             } else {
                 quote! {
@@ -337,28 +337,19 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 }
             }
         })
-        .collect();
+        .collect()
+}
 
-    // ------------------------------------------------------------------
-    // Build the macro_rules! arms.
-    //
-    // Calling convention (README):
-    //   macro_name!($mod_name: $type = $instance_expr)
-    //
-    // The primary arm pattern depends on whether any test method takes self:
-    //   • with instance methods:  ($mod_name:ident : $type:ty = $expr:expr)
-    //   • static / quickcheck only: ($mod_name:ident : $type:ty)
-    //
-    // Supporting shorthand arms (generated via string parsing, since
-    // macro repetition syntax cannot be expressed with quote!):
-    //   • default arm:    ($mod_name:ident : $type:ty)
-    //                       → delegates using Default::default()
-    //   • turbofish arm:  ($mod_name:ident = StructName::<T,...> rest...)
-    //                       → infers type from expression
-    //   • plain abbrev:   ($mod_name:ident = StructName rest...)
-    //                       → infers type from expression
-    // ------------------------------------------------------------------
-    let (main_pat, supporting_arms) = if has_self_test_methods {
+fn generate_invocation_arms(
+    macro_name: &Ident,
+    struct_name: &Ident,
+    type_param_count: usize,
+    methods: &TestMethods,
+) -> (TokenStream2, TokenStream2) {
+    let dollar_mod_name = dollar_ident("mod_name");
+    let dollar_type = dollar_ident("type");
+    let dollar_expr = dollar_ident("expr");
+    if methods.has_self() {
         let pat = quote! {
             #dollar_mod_name : ident : #dollar_type : ty = #dollar_expr : expr
         };
@@ -378,20 +369,11 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
         };
 
         // Abbreviated plain arm: infer type from StructName expr.
-        let has_static_test_methods = test_methods.iter().any(|tm| !tm.has_self)
-            || !quickcheck_methods.is_empty()
-            || proptest_methods.iter().any(|pm| {
-                !pm.args
-                    .first()
-                    .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)))
-            });
-        let plain_arm: TokenStream2 = if type_params.is_empty() || !has_static_test_methods {
-            let wildcard_params = if type_params.is_empty() {
+        let plain_arm: TokenStream2 = if type_param_count == 0 || !methods.has_static() {
+            let wildcard_params = if type_param_count == 0 {
                 quote! {}
             } else {
-                let wildcards = type_params
-                    .iter()
-                    .fold(quote! {}, |acc, _| quote! { #acc _, });
+                let wildcards = (0..type_param_count).fold(quote! {}, |acc, _| quote! { #acc _, });
                 quote! { < #wildcards > }
             };
             quote! {
@@ -420,12 +402,26 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
             #dollar_mod_name : ident : #dollar_type : ty
         };
         (pat, TokenStream2::new())
-    };
+    }
+}
 
-    // ------------------------------------------------------------------
-    // Assemble the final output.
-    // ------------------------------------------------------------------
-    let macro_rules_def = quote! {
+fn generate_macro_rules(
+    macro_name: &Ident,
+    struct_name: &Ident,
+    impl_block: &ItemImpl,
+    methods: &TestMethods,
+) -> TokenStream2 {
+    let dollar_mod_name = dollar_ident("mod_name");
+    let test_fn_items = generate_test_wrappers(&methods.tests);
+    let quickcheck_fn_items = generate_quickcheck_wrappers(&methods.quickchecks);
+    let proptest_fn_items = generate_proptest_wrappers(&methods.proptests);
+    let (main_pat, supporting_arms) = generate_invocation_arms(
+        macro_name,
+        struct_name,
+        impl_block.generics.type_params().count(),
+        methods,
+    );
+    quote! {
         #[macro_export]
         macro_rules! #macro_name {
             #supporting_arms
@@ -439,13 +435,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 }
             }
         }
-    };
-
-    quote! {
-        #impl_block
-        #macro_rules_def
     }
-    .into()
 }
 
 #[deprecated(
@@ -494,6 +484,24 @@ fn build_proptest_method(
         .to_compile_error()
         .into());
     }
+    let mut param_names = Vec::new();
+    for arg in &method.sig.inputs {
+        if let FnArg::Typed(arg) = arg {
+            match &*arg.pat {
+                Pat::Ident(pat) => {
+                    param_names.push(pat.ident.clone());
+                }
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &arg.pat,
+                        "generate_test_macro: #[proptest] method parameters must have an outer identifier binding",
+                    )
+                    .to_compile_error()
+                    .into());
+                }
+            }
+        }
+    }
     let name = method.sig.ident.clone();
     let param_exprs = parse_proptest_attr(proptest_attr)?;
     method.sig.output = parse_quote!(-> ::proptest::test_runner::TestCaseResult);
@@ -513,6 +521,7 @@ fn build_proptest_method(
     Ok(ProptestMethod {
         name,
         args: method.sig.inputs.iter().cloned().collect(),
+        param_names,
         param_exprs,
         cfg_attrs,
     })
@@ -560,6 +569,21 @@ fn parse_proptest_attr(attr: syn::Attribute) -> Result<HashMap<String, syn::Expr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proptest_wrappers_preserve_parameter_names() {
+        let mut method = parse_quote!(
+            fn property(first: u32, r#type: u32) {}
+        );
+        let attr = parse_quote!(#[proptest(first in 0u32..10)]);
+        let method = build_proptest_method(&mut method, attr).unwrap();
+        let wrapper = generate_proptest_wrappers(&[method]).to_string();
+
+        assert!(wrapper.contains("first in 0u32 .. 10 , r#type : u32"));
+        assert!(wrapper.contains("property (first , r#type)"));
+        assert!(!wrapper.contains("a0"));
+        assert!(!wrapper.contains("a1"));
+    }
 
     #[test]
     fn bare_proptest_attr_has_no_parameters() {

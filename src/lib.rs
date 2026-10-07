@@ -1,8 +1,13 @@
 #![doc = include_str!("../README.md")]
+use std::collections::HashMap;
+
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::{parse_macro_input, parse_quote, FnArg, ImplItem, ItemImpl, Visibility};
+use syn::{
+    parse_macro_input, parse_quote, punctuated::Punctuated, FnArg, ImplItem, ItemImpl, Pat,
+    Visibility,
+};
 
 // ---------------------------------------------------------------------------
 // Token-stream helpers
@@ -59,6 +64,15 @@ struct QuickcheckMethod {
     cfg_attrs: Vec<syn::Attribute>,
 }
 
+struct ProptestMethod {
+    name: Ident,
+    args: Vec<syn::FnArg>,
+    param_exprs: HashMap<String, syn::Expr>,
+    /// Any `#[cfg(...)]` attributes on the original method, propagated verbatim
+    /// onto the generated wrapper function.
+    cfg_attrs: Vec<syn::Attribute>,
+}
+
 // ---------------------------------------------------------------------------
 // Proc-macro entry point
 // ---------------------------------------------------------------------------
@@ -101,6 +115,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
     // ------------------------------------------------------------------
     let mut test_methods: Vec<TestMethod> = Vec::new();
     let mut quickcheck_methods: Vec<QuickcheckMethod> = Vec::new();
+    let mut proptest_methods: Vec<ProptestMethod> = Vec::new();
 
     for impl_item in &mut impl_block.items {
         let ImplItem::Fn(method) = impl_item else {
@@ -112,6 +127,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
         // Detect and strip special attributes.
         let mut is_test = false;
         let mut is_quickcheck = false;
+        let mut proptest_attr = None;
         let mut extra_attrs: Vec<syn::Attribute> = Vec::new();
         method.attrs.retain(|attr| {
             if attr.path().is_ident("test") {
@@ -119,6 +135,9 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 false
             } else if attr.path().is_ident("quickcheck") {
                 is_quickcheck = true;
+                false
+            } else if attr.path().is_ident("proptest") {
+                proptest_attr = Some(attr.clone());
                 false
             } else if attr.path().is_ident("should_panic") || attr.path().is_ident("ignore") {
                 // Collect for propagation onto the generated #[test] wrapper,
@@ -134,7 +153,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
             }
         });
 
-        if is_test || is_quickcheck {
+        if is_test || is_quickcheck || proptest_attr.is_some() {
             method.vis = Visibility::Public(Default::default());
             method.attrs.push(parse_quote!(#[doc(hidden)]));
             method.attrs.push(parse_quote!(#[inline(never)]));
@@ -153,9 +172,13 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                 extra_attrs,
             });
         } else if is_quickcheck {
-            let qm = build_quickcheck_method(method, &type_params);
+            let qm = build_quickcheck_method(method);
             quickcheck_methods.push(qm);
-            let _ = (&is_quickcheck, &method_name, &type_params);
+        } else if let Some(attr) = proptest_attr {
+            match build_proptest_method(method, attr) {
+                Ok(pm) => proptest_methods.push(pm),
+                Err(error) => return error,
+            }
         }
     }
 
@@ -165,10 +188,11 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
     let has_test_methods = !test_methods.is_empty();
     let has_self_test_methods = test_methods.iter().any(|tm| tm.has_self);
     let has_quickcheck_methods = !quickcheck_methods.is_empty();
+    let has_proptest_methods = !proptest_methods.is_empty();
 
-    if !has_test_methods && !has_quickcheck_methods {
+    if !has_test_methods && !has_quickcheck_methods && !has_proptest_methods {
         return quote! {
-            compile_error!("generate_test_macro: the impl block must contain at least one #[test] or #[quickcheck] method");
+            compile_error!("generate_test_macro: the impl block must contain at least one #[test], #[quickcheck], or #[proptest] method");
             #impl_block
         }
         .into();
@@ -241,6 +265,26 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
                     quickcheck::quickcheck(
                         < #dollar_type > :: #name as fn( #underscores ) -> _
                     );
+                }
+            }
+        })
+        .collect();
+
+    let proptest_fn_items: TokenStream2 = proptest_methods
+        .iter()
+        .map(|pm| {
+            let name = &pm.name;
+            let cfg_attrs = &pm.cfg_attrs;
+            let args = pm
+                .args
+                .iter()
+                .cloned()
+                .collect::<Punctuated<FnArg, syn::Token![,]>>();
+            quote! {
+                #(#cfg_attrs)*
+                #[test]
+                fn #name(#args) {
+                    todo!();
                 }
             }
         })
@@ -362,7 +406,7 @@ pub fn test_suite_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 // Quickcheck method builder
 // ---------------------------------------------------------------------------
 
-fn build_quickcheck_method(method: &syn::ImplItemFn, _type_params: &[Ident]) -> QuickcheckMethod {
+fn build_quickcheck_method(method: &syn::ImplItemFn) -> QuickcheckMethod {
     let name = method.sig.ident.clone();
     let arity = method
         .sig
@@ -380,5 +424,91 @@ fn build_quickcheck_method(method: &syn::ImplItemFn, _type_params: &[Ident]) -> 
         name,
         arity,
         cfg_attrs,
+    }
+}
+
+fn build_proptest_method(
+    method: &syn::ImplItemFn,
+    proptest_attr: syn::Attribute,
+) -> Result<ProptestMethod, TokenStream> {
+    let name = method.sig.ident.clone();
+    let param_exprs = parse_proptest_attr(proptest_attr)?;
+    let cfg_attrs = method
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg"))
+        .cloned()
+        .collect();
+    Ok(ProptestMethod {
+        name,
+        args: method.sig.inputs.iter().cloned().collect(),
+        param_exprs,
+        cfg_attrs,
+    })
+}
+
+// The attribute should have the form
+//   #[proptest(param1 in expr1, param2 in expr2, ...)]
+// where the params are identifiers and the expressions are instances of `syn::Expr`
+//
+// Alternatively, simply #[proptest] is acceptable and indicates no parameters.
+//
+// Produces a TokenStream emitting a compilation error if the attribute is malformed.
+fn parse_proptest_attr(attr: syn::Attribute) -> Result<HashMap<String, syn::Expr>, TokenStream> {
+    if matches!(attr.meta, syn::Meta::Path(_)) {
+        return Ok(HashMap::new());
+    }
+
+    let parsed = attr.parse_args_with(|input: syn::parse::ParseStream| {
+        let mut param_exprs = HashMap::new();
+
+        while !input.is_empty() {
+            let param: Ident = input.parse()?;
+            input.parse::<syn::Token![in]>()?;
+            let expr: syn::Expr = input.parse()?;
+
+            let name = param.to_string();
+            if param_exprs.insert(name.clone(), expr).is_some() {
+                return Err(syn::Error::new(
+                    param.span(),
+                    format!("duplicate proptest parameter `{name}`"),
+                ));
+            }
+
+            if !input.is_empty() {
+                input.parse::<syn::Token![,]>()?;
+            }
+        }
+
+        Ok(param_exprs)
+    });
+
+    parsed.map_err(|error| error.to_compile_error().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_proptest_attr_has_no_parameters() {
+        let attr = parse_quote!(#[proptest]);
+        assert!(parse_proptest_attr(attr).unwrap().is_empty());
+    }
+
+    #[test]
+    fn empty_proptest_attr_has_no_parameters() {
+        let attr = parse_quote!(#[proptest()]);
+        assert!(parse_proptest_attr(attr).unwrap().is_empty());
+    }
+
+    #[test]
+    fn proptest_attr_parses_expressions_with_trailing_comma() {
+        let attr = parse_quote!(#[proptest(a in 0..10, b in strategy(1, 2),)]);
+        let params = parse_proptest_attr(attr).unwrap();
+
+        assert_eq!(params.len(), 2);
+        assert!(matches!(params["a"], syn::Expr::Range(_)));
+        assert!(matches!(params["b"], syn::Expr::Call(_)));
     }
 }

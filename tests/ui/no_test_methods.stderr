@@ -1,4 +1,4 @@
-error: generate_test_macro: the impl block must contain at least one #[test] or #[quickcheck] method
+error: generate_test_macro: the impl block must contain at least one #[test], #[quickcheck], or #[proptest] method
  --> tests/ui/no_test_methods.rs:7:1
   |
 7 | #[generate_test_macro(plain_suite)]

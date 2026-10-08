@@ -1,10 +1,3 @@
-// Test 5 – #[quickcheck] methods (requires `--features quickcheck`)
-//
-// Mirrors the README quickcheck example.  Covers:
-//   • A `bool`-returning property (all outcomes accepted)
-//   • A `TestResult`-returning property (with discard)
-//   • A generic impl<T> suite (type param threaded through the macro call)
-
 #[allow(dead_code)]
 trait MyTrait: Send + Sync {
     fn name(&self) -> &str;
@@ -25,21 +18,25 @@ mod proptest_suite {
     #[derive(Default)]
     pub struct MathSuite(pub u32);
 
-    fn private_method() -> impl Strategy<Value = u32> {
-        0u32..10
-    }
-
     #[generate_test_macro(proptest_suite)]
     impl MathSuite {
+        fn private_method(&self) -> impl Strategy<Value = u32> {
+            0..self.0
+        }
+
+        fn private_function() -> impl Strategy<Value = u32> {
+            0..10_u32
+        }
+
         /// Addition is commutative for all u32 pairs.
-        #[proptest(a in private_method(), b in private_method())]
-        fn addition_is_commutative(mut self, a: u32, b: u32) {
-            self.0 += 1;
+        #[proptest(a in self.private_method(), b in self.private_method())]
+        fn addition_is_commutative(self, a: u32, b: u32) {
+            let _ = self.0;
             prop_assert_eq!(a.wrapping_add(b), b.wrapping_add(a));
         }
 
         /// Subtraction result is at most `a` when `a >= b`; discard otherwise.
-        #[proptest(b in private_method())]
+        #[proptest(b in Self::private_function())]
         fn subtraction_is_bounded(a: u32, b: u32) {
             prop_assume!(a >= b);
             prop_assert!(a - b <= a);

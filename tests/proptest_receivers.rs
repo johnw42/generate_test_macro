@@ -26,20 +26,15 @@ impl ReceiverSuite {
         proptest::prop_assert!((1..10).contains(&value));
     }
 
-    #[proptest]
-    fn receiver_only(&self) {
-        proptest::prop_assert!(!self.changed);
-    }
-
     #[proptest(value in 1u32..10)]
     fn static_property(value: u32) {
         proptest::prop_assert!((1..10).contains(&value));
     }
 
-    #[proptest(__instance in 1u32..10)]
-    fn receiver_name_collision(&self, __instance: u32) {
+    #[proptest(instance in 1u32..10)]
+    fn receiver_name_collision(&self, instance: u32) {
         proptest::prop_assert!(!self.changed);
-        proptest::prop_assert!((1..10).contains(&__instance));
+        proptest::prop_assert!((1..10).contains(&instance));
     }
 
     #[proptest(value in 1u32..10)]

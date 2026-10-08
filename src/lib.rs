@@ -5,7 +5,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, punctuated::Punctuated, FnArg, ImplItem, ItemImpl, Pat,
+    parse_macro_input, parse_quote, punctuated::Punctuated, FnArg, ImplItem, ItemImpl, LitStr, Pat,
     Visibility,
 };
 
@@ -80,19 +80,12 @@ struct QuickcheckMethod {
 struct ProptestMethod {
     name: Ident,
     args: Vec<syn::FnArg>,
+    has_self: bool,
     param_names: Vec<Ident>,
     param_exprs: HashMap<String, syn::Expr>,
     /// Any `#[cfg(...)]` attributes on the original method, propagated verbatim
     /// onto the generated wrapper function.
     cfg_attrs: Vec<syn::Attribute>,
-}
-
-impl ProptestMethod {
-    fn has_self(&self) -> bool {
-        self.args
-            .first()
-            .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)))
-    }
 }
 
 #[derive(Default)]
@@ -109,13 +102,13 @@ impl TestMethods {
 
     fn has_self(&self) -> bool {
         self.tests.iter().any(|method| method.has_self)
-            || self.proptests.iter().any(ProptestMethod::has_self)
+            || self.proptests.iter().any(|method| method.has_self)
     }
 
     fn has_static(&self) -> bool {
         self.tests.iter().any(|method| !method.has_self)
             || !self.quickchecks.is_empty()
-            || self.proptests.iter().any(|method| !method.has_self())
+            || self.proptests.iter().any(|method| !method.has_self)
     }
 }
 
@@ -306,6 +299,8 @@ fn generate_quickcheck_wrappers(quickcheck_methods: &[QuickcheckMethod]) -> Toke
 fn generate_proptest_wrappers(proptest_methods: &[ProptestMethod]) -> TokenStream2 {
     let dollar_type = dollar_ident("type");
     let dollar_expr = dollar_ident("expr");
+    let instance = syn::Ident::new("instance", Span::mixed_site());
+
     proptest_methods
         .iter()
         .map(|pm| {
@@ -313,7 +308,13 @@ fn generate_proptest_wrappers(proptest_methods: &[ProptestMethod]) -> TokenStrea
             let cfg_attrs = &pm.cfg_attrs;
             let call_args: Punctuated<Ident, syn::Token![,]> =
                 pm.param_names.iter().cloned().collect();
-            let mut strategy_args: Punctuated<TokenStream2, syn::Token![,]> = pm
+            let arg_name_strings: Punctuated<LitStr, syn::Token![,]> = pm
+                .param_names
+                .iter()
+                .map(|name| LitStr::new(&name.to_string(), name.span()))
+                .collect();
+            let mut needs_instance = false;
+            let mut strategies: Punctuated<TokenStream2, syn::Token![,]> = pm
                 .args
                 .iter()
                 .filter_map(|arg| match arg {
@@ -324,35 +325,64 @@ fn generate_proptest_wrappers(proptest_methods: &[ProptestMethod]) -> TokenStrea
                 .map(|(arg, name)| {
                     if pm.param_exprs.contains_key(&name.to_string()) {
                         let strategy_method = proptest_strategy_method_name(&pm.name, name);
-                        quote!(#name in <#dollar_type>::#strategy_method())
+                        if pm.has_self {
+                            needs_instance = true;
+                            quote!(#instance.#strategy_method())
+                        } else {
+                            quote!(<#dollar_type>::#strategy_method())
+                        }
                     } else {
                         let ty = &arg.ty;
-                        quote!(#name: #ty)
+                        quote!(::proptest::arbitrary::any::<#ty>())
                     }
                 })
                 .collect();
             // proptest! requires at least one strategy, even for receiver-only methods.
-            if strategy_args.is_empty() {
-                strategy_args.push(quote!(_ in ::proptest::strategy::Just(())));
+            if strategies.is_empty() {
+                strategies.push(quote!(::proptest::strategy::Just(())));
             }
-            let call = if pm.has_self() {
-                let instance = Ident::new("__instance", Span::mixed_site());
+            let instance_decl = if needs_instance {
                 quote! {
                     #[allow(unused_mut)]
                     let mut #instance : #dollar_type = #dollar_expr;
-                    #instance . #name (#call_args)?;
+                }
+            } else {
+                quote! {}
+            };
+            let call = if pm.has_self {
+                quote! {
+                    #[allow(unused_mut)]
+                    let mut #instance : #dollar_type = #dollar_expr;
+                    #instance.#name(#call_args)?
                 }
             } else {
                 quote! {
-                    < #dollar_type > :: #name (#call_args)?;
+                    <#dollar_type>::#name(#call_args)?
                 }
             };
             quote! {
-                ::proptest::proptest! {
-                    #(#cfg_attrs)*
-                    #[test]
-                    fn #name(#strategy_args) {
-                        #call
+                #(#cfg_attrs)*
+                #[test]
+                #[allow(unused_parens)]
+                fn #name() {
+                    let mut config =
+                        ::proptest::test_runner::contextualize_config(
+                            ::proptest::test_runner::Config::default());
+                    config.source_file = Some(file!());
+                    let mut runner = ::proptest::test_runner::TestRunner::new(config);
+                    #instance_decl
+                    let strategies = (#strategies);
+                    match runner.run(
+                        &::proptest::strategy::Strategy::prop_map(
+                            strategies,
+                            |values| ::proptest::sugar::NamedArguments((#arg_name_strings), values)),
+                        |::proptest::sugar::NamedArguments(_, (#call_args))| {
+                            #call;
+                            Ok(())
+                        },
+                    ) {
+                        Ok(_) => (),
+                        Err(e) => panic!("{}\n{}", e, runner),
                     }
                 }
             }
@@ -523,6 +553,11 @@ fn build_proptest_method(
         }
     }
     let name = method.sig.ident.clone();
+    let has_self = method
+        .sig
+        .inputs
+        .first()
+        .is_some_and(|arg| matches!(arg, FnArg::Receiver(_)));
     let param_exprs = parse_proptest_attr(proptest_attr)?;
     let cfg_attrs: Vec<_> = method
         .attrs
@@ -544,14 +579,13 @@ fn build_proptest_method(
             let strategy = param_exprs.get(&param.ident.to_string())?;
             let strategy_method_name = proptest_strategy_method_name(&name, &param.ident);
             let arg_ty = &arg.ty;
-            let (impl_generics, _, where_clause) = method.sig.generics.split_for_impl();
+            let receiver = has_self.then_some(quote!(&self));
             Some(parse_quote! {
                 #(#cfg_attrs)*
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub fn #strategy_method_name #impl_generics()
+                pub fn #strategy_method_name(#receiver)
                     -> impl ::proptest::strategy::Strategy<Value = #arg_ty>
-                    #where_clause
                 {
                     #strategy
                 }
@@ -570,6 +604,7 @@ fn build_proptest_method(
         ProptestMethod {
             name,
             args: method.sig.inputs.iter().cloned().collect(),
+            has_self,
             param_names,
             param_exprs,
             cfg_attrs,

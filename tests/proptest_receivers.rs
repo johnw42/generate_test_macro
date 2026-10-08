@@ -48,6 +48,7 @@ impl ReceiverSuite {
         proptest::prop_assert!((2..11).contains(&value));
     }
 
+    #[allow(clippy::toplevel_ref_arg)]
     #[proptest]
     fn reference_parameter(ref value: u32) {
         proptest::prop_assert_eq!(*value, value.wrapping_add(0));

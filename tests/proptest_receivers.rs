@@ -76,5 +76,5 @@ impl<T: Copy + PartialEq + std::fmt::Debug> GenericSuite<T> {
     }
 }
 
-generic_receiver_suite!(generic_abbreviated = GenericSuite { value: 42u32 });
+generic_receiver_suite!(generic_typed: GenericSuite<u32> = GenericSuite { value: 42u32 });
 generic_receiver_suite!(generic_turbofish = GenericSuite::<u32> { value: 42 });

@@ -24,6 +24,19 @@ fn dollar_ident(name: &str) -> TokenStream2 {
     ts
 }
 
+fn proptest_strategy_method_name(method: &Ident, param: &Ident) -> Ident {
+    let method_name = method.to_string();
+    let param_name = param.to_string();
+    Ident::new(
+        &format!(
+            "{}_{}_strategy",
+            method_name.strip_prefix("r#").unwrap_or(&method_name),
+            param_name.strip_prefix("r#").unwrap_or(&param_name)
+        ),
+        method.span(),
+    )
+}
+
 /// Extract the last path segment ident from a `syn::Type`.
 /// E.g. `TestSuite<T>` → `TestSuite`.
 fn extract_struct_name(ty: &syn::Type) -> Ident {
@@ -156,6 +169,7 @@ pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream 
 
 fn collect_test_methods(impl_block: &mut ItemImpl) -> Result<TestMethods, TokenStream> {
     let mut methods = TestMethods::default();
+    let mut strategy_methods = Vec::new();
 
     for impl_item in &mut impl_block.items {
         let ImplItem::Fn(method) = impl_item else {
@@ -215,10 +229,16 @@ fn collect_test_methods(impl_block: &mut ItemImpl) -> Result<TestMethods, TokenS
             let qm = build_quickcheck_method(method);
             methods.quickchecks.push(qm);
         } else if let Some(attr) = proptest_attr {
-            methods.proptests.push(build_proptest_method(method, attr)?);
+            let (proptest_method, generated_strategy_methods) =
+                build_proptest_method(method, attr)?;
+            methods.proptests.push(proptest_method);
+            strategy_methods.extend(generated_strategy_methods);
         }
     }
 
+    impl_block
+        .items
+        .extend(strategy_methods.into_iter().map(ImplItem::Fn));
     Ok(methods)
 }
 
@@ -302,9 +322,9 @@ fn generate_proptest_wrappers(proptest_methods: &[ProptestMethod]) -> TokenStrea
                 })
                 .zip(call_args.iter())
                 .map(|(arg, name)| {
-                    let strategy = pm.param_exprs.get(&name.to_string());
-                    if let Some(strategy) = strategy {
-                        quote!(#name in #strategy)
+                    if pm.param_exprs.contains_key(&name.to_string()) {
+                        let strategy_method = proptest_strategy_method_name(&pm.name, name);
+                        quote!(#name in <#dollar_type>::#strategy_method())
                     } else {
                         let ty = &arg.ty;
                         quote!(#name: #ty)
@@ -475,7 +495,7 @@ fn build_quickcheck_method(method: &syn::ImplItemFn) -> QuickcheckMethod {
 fn build_proptest_method(
     method: &mut syn::ImplItemFn,
     proptest_attr: syn::Attribute,
-) -> Result<ProptestMethod, TokenStream> {
+) -> Result<(ProptestMethod, Vec<syn::ImplItemFn>), TokenStream> {
     if let syn::ReturnType::Type(..) = &method.sig.output {
         return Err(syn::Error::new_spanned(
             &method.sig.output,
@@ -504,6 +524,40 @@ fn build_proptest_method(
     }
     let name = method.sig.ident.clone();
     let param_exprs = parse_proptest_attr(proptest_attr)?;
+    let cfg_attrs: Vec<_> = method
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg"))
+        .cloned()
+        .collect();
+    let strategy_methods = method
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| {
+            let FnArg::Typed(arg) = arg else {
+                return None;
+            };
+            let Pat::Ident(param) = &*arg.pat else {
+                return None;
+            };
+            let strategy = param_exprs.get(&param.ident.to_string())?;
+            let strategy_method_name = proptest_strategy_method_name(&name, &param.ident);
+            let arg_ty = &arg.ty;
+            let (impl_generics, _, where_clause) = method.sig.generics.split_for_impl();
+            Some(parse_quote! {
+                #(#cfg_attrs)*
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub fn #strategy_method_name #impl_generics()
+                    -> impl ::proptest::strategy::Strategy<Value = #arg_ty>
+                    #where_clause
+                {
+                    #strategy
+                }
+            })
+        })
+        .collect();
     method.sig.output = parse_quote!(-> ::proptest::test_runner::TestCaseResult);
     if let Some(syn::Stmt::Expr(_, semi)) = method.block.stmts.last_mut() {
         *semi = Some(Default::default());
@@ -512,19 +566,16 @@ fn build_proptest_method(
         .block
         .stmts
         .push(syn::Stmt::Expr(parse_quote!(Ok(())), None));
-    let cfg_attrs = method
-        .attrs
-        .iter()
-        .filter(|a| a.path().is_ident("cfg"))
-        .cloned()
-        .collect();
-    Ok(ProptestMethod {
-        name,
-        args: method.sig.inputs.iter().cloned().collect(),
-        param_names,
-        param_exprs,
-        cfg_attrs,
-    })
+    Ok((
+        ProptestMethod {
+            name,
+            args: method.sig.inputs.iter().cloned().collect(),
+            param_names,
+            param_exprs,
+            cfg_attrs,
+        },
+        strategy_methods,
+    ))
 }
 
 // The attribute should have the form
@@ -576,11 +627,13 @@ mod tests {
             fn property(first: u32, r#type: u32) {}
         );
         let attr = parse_quote!(#[proptest(first in 0u32..10)]);
-        let method = build_proptest_method(&mut method, attr).unwrap();
+        let (method, _) = build_proptest_method(&mut method, attr).unwrap();
         let wrapper = generate_proptest_wrappers(&[method]).to_string();
 
-        assert!(wrapper.contains("first in 0u32 .. 10 , r#type : u32"));
+        assert!(wrapper.contains("first in < $ type > :: property_first_strategy ()"));
+        assert!(wrapper.contains("r#type : u32"));
         assert!(wrapper.contains("property (first , r#type)"));
+        assert!(!wrapper.contains("first in 0u32 .. 10"));
         assert!(!wrapper.contains("a0"));
         assert!(!wrapper.contains("a1"));
     }

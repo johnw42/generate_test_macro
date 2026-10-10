@@ -21,7 +21,7 @@ mod proptest_suite {
     #[generate_test_macro(proptest_suite)]
     impl MathSuite {
         fn private_method(&self) -> impl Strategy<Value = u32> {
-            0..self.0
+            0..=self.0
         }
 
         fn private_function() -> impl Strategy<Value = u32> {

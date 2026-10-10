@@ -6,3 +6,5 @@ error: static_test_suite: type parameters for StaticSuite cannot be inferred; us
 ...
 21 | static_test_suite!(with_instance = StaticSuite(0i32));
    | ----------------------------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `static_test_suite` (in Nightly builds, run with -Z macro-backtrace for more info)

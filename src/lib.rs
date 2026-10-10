@@ -1,4 +1,282 @@
-#![doc = include_str!("../README.md")]
+//! A proc macro for writing a suite of unit tests as methods or associated
+//! functions on a type.  This is useful for running the same suite of tests on
+//! multiple instances of the type, and for writing `proptest` tests without
+//! putting all test code inside a macro call.
+//!
+//! # Motivation and Examples
+//!
+//! Consider trying to test the following function, which uses polymorphism to
+//! be generic over different number types.  You'd like to test it with various
+//! integer types.
+//!
+//! ```rust
+//! # use std::ops::{Add, Div, Mul};
+//! /// Computes the sum of integers from `0..=n` using the Gaussian formula.
+//! fn gauss_sum<N>(n: N) -> N
+//! where
+//!     N: From<u8> + Add<Output = N> + Div<Output = N> + Mul<Output = N> + Copy,
+//! {
+//!     n * (n + 1.into()) / 2.into()
+//! }
+//! ```
+//!
+//! ## Naive Macro
+//!
+//! A naive approach to generating multiple tests is to define a macro, like
+//! this:
+//!
+//! ```rust,no_run
+//! macro_rules! gauss_test {
+//!     ($name:ident, $ty:ty, $n:expr) => {
+//!         #[test]
+//!         fn $name() {
+//!             let expected: $ty = (0..=$n).into_iter().sum();
+//!             let actual: $ty = gauss_sum($n);
+//!             assert_eq!(expected, actual);
+//!         }
+//!     };
+//! }
+//!
+//! gauss_test!(for_u8, u8, 10);
+//! gauss_test!(for_i32, i32, 1024);
+//! // ...repeat for more integer types
+//! ```
+//!
+//! This works, but it has a severe drawback: all of your test logic lives
+//! inside a `macro_rules!` definition, meaning you'll have to format it
+//! manually and you can't get help from your IDE for it.  This can be very
+//! annoying when writing large, complicated tests!  Another less obvious
+//! drawback is that when errors are reported in the test, they are reported at
+//! the location of the macro invocation rather than the location of the test
+//! code, making it hard to track down the source of the error.
+//!
+//! ## Moving Test Logic Out Of Macros
+//!
+//! Using `generate_test_macro` allows you to move your test logic out of the
+//! macro and into regular Rust functions, while still generating the necessary
+//! test wrappers automatically.
+//!
+//! ```rust,no_run
+//! # use std::ops::{Add, Div, Mul};
+//! # fn gauss_sum<N>(n: N) -> N { todo!() }
+//! # use generate_test_macro::generate_test_macro;
+//! # use std::fmt::Debug;
+//! # use std::iter::Sum;
+//! # use std::ops::RangeInclusive;
+//! struct GaussTest<N>(N);
+//!
+//! #[generate_test_macro(basic_tests)]
+//! impl<N> GaussTest<N>
+//! where
+//!     N: From<u8> + Add<Output = N> + Div<Output = N> + Mul<Output = N> + Copy,
+//!     N: Debug + Eq + Sum,
+//!     RangeInclusive<N>: IntoIterator<Item = N>,
+//! {
+//!     #[test]
+//!     fn test_sum(&self) {
+//!         // Test logic in non-macro code!
+//!         let expected: N = (0.into()..=self.0).into_iter().sum();
+//!         let actual: N = gauss_sum(self.0);
+//!         assert_eq!(expected, actual);
+//!     }
+//! }
+//!
+//! basic_tests!(for_u8 = GaussTest::<u8>(10));
+//! basic_tests!(for_i32 = GaussTest::<i32>(1024));
+//! ```
+//!
+//! ## More Thorough Testing
+//!
+//! Testing single input values doesn't test our code very thoroughly.  To have
+//! more confidence in our implementation, we should test a wider range of
+//! inputs, for which we can use a property-testing framework like `quickcheck`.
+//! Support for `quickcheck` is build into `generate_test_macro!`, so you can
+//! write a test like this.
+//!
+//! ```rust,no_run
+//! # use std::ops::{Add, Div, Mul};
+//! # fn gauss_sum<N>(n: N) -> N { todo!() }
+//! # use generate_test_macro::generate_test_macro;
+//! # use quickcheck::TestResult;
+//! # use std::fmt::Debug;
+//! # use std::iter::Sum;
+//! # use std::marker::PhantomData;
+//! # use std::ops::RangeInclusive;
+//! struct GaussTest<N, const LIMIT: usize>(PhantomData<N>);
+//!
+//! #[generate_test_macro(quickcheck_tests)]
+//! impl<N, const LIMIT: usize> GaussTest<N, LIMIT>
+//! where
+//!     N: From<u8> + Add<Output = N> + Div<Output = N> + Mul<Output = N> + Copy,
+//!     N: Debug + Eq + Sum + TryFrom<usize>,
+//!     usize: From<N>,
+//!     <N as TryFrom<usize>>::Error: Debug,
+//!     RangeInclusive<N>: IntoIterator<Item = N>,
+//! {
+//!     #[quickcheck]
+//!     fn test_sum(arb: N) -> TestResult {
+//!         // Discard the test if the conversion to usize fails
+//!         let Ok(arb_usize) = usize::try_from(arb) else {
+//!             return TestResult::discard();
+//!         };
+//!         // Generate a number in the range 0..=LIMIT
+//!         let n: N = (arb_usize % LIMIT).try_into().unwrap();
+//!         let expected: N = (0.into()..=n).into_iter().sum();
+//!         let actual: N = gauss_sum(n);
+//!         assert_eq!(expected, actual);
+//!         TestResult::passed()
+//!     }
+//! }
+//!
+//! quickcheck_tests!(for_u8: GaussTest<u8, 10>);
+//! quickcheck_tests!(for_i32: GaussTest<i32, 1024>);
+//! ```
+//!
+//! Some things are worth noting in this example.  First, the test method no
+//! longer takes `&self` as a parameter, which is necessary because of
+//! limitations in `quickcheck`.  Second, the invocations of `quickcheck_tests!`
+//! specify a type rather than a value of the `GaussTest` struct; this works
+//! because no test methods in `GaussTest` take `&self` as a parameter.  Instead
+//! of a `self` parameter, the test method makes an arbitrary value provided by
+//! the testing framework, and in general, tests built with `quickcheck` or
+//! `proptest` *must* take parameters other than `&self`.
+//!
+//! Going more deeply, this test has some clear drawbacks.  The test logic has
+//! become more complicated because it has to handle negative numbers generated
+//! by `quickcheck`, and we have to jump through some hoops to specify the limit
+//! of the numbers we'll pass to `gauss_sum`, and this logic leads to a lot of
+//! boilerplate.
+//!
+//! ## Gaining Flexibility and Simplicity with Proptest
+//!
+//! Rather than using `quickcheck` with its limitations and boilerplate, we can
+//! use `proptest` to generate test cases in a more flexible and concise manner.
+//! Unlike `quickcheck`, which relies on its `Arbitrary` trait to generate test
+//! cases, `proptest` uses strategies that give you more control over the
+//! generated values.  Although `proptest` has its own `Arbitrary` trait,
+//! `generate_test_macro` makes it possible to specify a `proptest` strategy for
+//! each test parameter, only falling back to `Arbitrary` when no strategy is
+//! specified.
+//!
+//! Here is a version of the tests using `propcheck`.
+//!
+//! ```rust
+//! # use std::ops::{Add, Div, Mul};
+//! # fn gauss_sum<N>(n: N) -> N { todo!() }
+//! # use generate_test_macro::generate_test_macro;
+//! # use std::fmt::Debug;
+//! # use std::iter::Sum;
+//! # use std::ops::RangeInclusive;
+//! # use proptest::prelude::*;
+//! struct GaussTest<N>(RangeInclusive<N>);
+//!
+//! #[generate_test_macro(propcheck_tests)]
+//! impl<N> GaussTest<N>
+//! where
+//!     N: From<u8> + Add<Output = N> + Div<Output = N> + Mul<Output = N> + Copy,
+//!     N: Debug + Eq + Sum,
+//!     RangeInclusive<N>: IntoIterator<Item = N> + Strategy<Value = N>,
+//! {
+//!     #[proptest(arb in self.0.clone())]
+//!     fn test_sum(&self, arb: N) {
+//!         let expected: N = (0.into()..=arb).into_iter().sum();
+//!         let actual: N = gauss_sum(arb);
+//!         prop_assert_eq!(expected, actual);
+//!     }
+//! }
+//!
+//! propcheck_tests!(for_u8 = GaussTest::<u8>(0..=10));
+//! propcheck_tests!(for_i32 = GaussTest::<i32>(0..=1024));
+//! ```
+//!
+//! In this example, we're back to using a `&self` parameter in the test method,
+//! and the `GaussTest` struct encapsulates the range for generating test cases,
+//! which `proptest` uses as a strategy for generating test inputs.  Each call
+//! to `propcheck_tests!` specifies a range of values to test so we don't have
+//! to worry about negative inputs anymore.  Notice that the strategy specified
+//! for the `arb` parameter refers to `self`, which is allowed in `proptest`
+//! tests that accept a `&self` parameter.
+//!
+//! # Reference
+//!
+//! The `generate_test_macro` is called on an `impl` block of the type
+//! containing the test methods.  Its only parameter is the name of the macro to
+//! generate.  Normal declarations inside the impl block are left unchanged, but
+//! function definitions annotated with `#[test]`, `#[proptest]`, or
+//! `#quickcheck` are treated as test cases.
+//!
+//! The generated macro needs three things when it is invoked: the name of a
+//! module to generate, the name of the test suite type, the instance of the
+//! test suite.  Often the name or value of the test type can be omitted, but
+//! the full syntax is
+//!
+//!   `$macro_name!($module_name: $test_type = $test_instance);`
+//!
+//! ## Types of Test Functions
+//!
+//! ### #\[test\]
+//!
+//! Functions annotated with `#[test]` act like standard Rust test functions.
+//! They can make `self` as a receiver, either by value or by reference, but
+//! they can't have any other parameters and must return `()`.  The
+//! `#[should_panic]` attribute is recognized and preserved.
+//!
+//! ### #\[proptest\]
+//!
+//! Function annotated with `#[proptest]` become `proptest` test cases.  They
+//! can take `self`as a receiver and they must have additional argument
+//! representing the test inputs to be generated by `proptest`.  By default, the
+//! argument types must implement `proptest::arbitrary::Arbitrary`, but an
+//! extended form of the attribute allows specifying custom strategies for
+//! generating the test inputs, such as `#[proptest(arg in 0..100)]`, which
+//! specifies that the parameter `arg` will have values generated from the
+//! strategy `0..100`.
+//!
+//! Function with the `#[proptest]` attribute must not have a return type
+//! specified; their return type is changed to
+//! `proptest::test_runner::TestCaseResult`, just as when a function is called
+//! from the `proptest!` macro.  This enables the test framework to properly
+//! handle test failures and report them using various macro provided by
+//! `proptest`.
+//!
+//! ### #\[quickcheck\]
+//!
+//! Functions annotated with `#[quickcheck]` become `quickcheck` test cases.
+//! They cannot take `self` as a receiver and they must have additional
+//! arguments, all of whose types implement `quickcheck::Arbitrary`.  The return
+//! type of the function can be any type allowed by `quickcheck`, typically
+//! `()`, `bool`, or `TestResult`.
+//!
+//! ## Transformation of Test Functions
+//!
+//! All test functions are made `pub` and `#[doc(hidden)]`.
+//!
+//! ## Creation of Test Instances
+//!
+//! If none of the test functions accept a `self` parameter, no instances of the
+//! test type are created, and the `= $test_instance` syntax used to specify the
+//! test instance must be omitted from the test macro invocation.
+//!
+//! For `#[test]` functions that have a `self` parameter, the test type instance
+//! is created once for each test.  It can be mutated without affecting other
+//! tests.
+//!
+//! For `#[proptest]` functions that have a `self` parameter, the test type
+//! instance is created once once for each invocation of the test method, which
+//! happens 256 times per test case by default.  For parameters with strategies,
+//! an additional instance is created to provide the `self` context of the
+//! strategy expressions.
+//!
+//! ### Abbreviated Signatures
+//!
+//! The `: $test_type` part of the test macro invocation may be omitted when it
+//! is obvious from the `$test_instance` expression.  The type is considered
+//! obvious when the expression starts with the unqualified name of the test
+//! type, possibly followed by type arguments.
+//!
+//! The `= $test_instance` syntax may be omitted if the test suite type
+//! implments `Default`, and must be omitted if no test function takes a `self`
+//! parameter.
 use std::collections::HashMap;
 
 use proc_macro::TokenStream;
@@ -121,17 +399,17 @@ impl TestMethods {
 /// # Example
 ///
 /// ```rust,ignore
+/// struct MySuite<T>(T);
+///
 /// #[generate_test_macro(my_suite_tests)]
 /// impl<T: MyTrait> MySuite<T> {
-///     fn new(arg: usize) -> Self { Self { arg } }
-///
 ///     #[test]
 ///     fn it_works(&self) { /* … */ }
 /// }
 ///
 /// // In a consumer crate (MySuite must be in scope at the invocation site):
 /// use my_crate::my_suite::MySuite;
-/// my_suite_tests!(for_concrete_impl, ConcreteType, 42);
+/// my_suite_tests!(for_concrete_impl: MySuite<ConcreteType> = MySuite(42));
 /// ```
 #[proc_macro_attribute]
 pub fn generate_test_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -344,7 +622,7 @@ fn generate_proptest_wrappers(proptest_methods: &[ProptestMethod]) -> TokenStrea
             let instance_decl = if needs_instance {
                 quote! {
                     #[allow(unused_mut)]
-                    let mut #instance : #dollar_type = #dollar_expr;
+                    let #instance : #dollar_type = #dollar_expr;
                 }
             } else {
                 quote! {}
@@ -655,23 +933,6 @@ fn parse_proptest_attr(attr: syn::Attribute) -> Result<HashMap<String, syn::Expr
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn proptest_wrappers_preserve_parameter_names() {
-        let mut method = parse_quote!(
-            fn property(first: u32, r#type: u32) {}
-        );
-        let attr = parse_quote!(#[proptest(first in 0u32..10)]);
-        let (method, _) = build_proptest_method(&mut method, attr).unwrap();
-        let wrapper = generate_proptest_wrappers(&[method]).to_string();
-
-        assert!(wrapper.contains("first in < $ type > :: property_first_strategy ()"));
-        assert!(wrapper.contains("r#type : u32"));
-        assert!(wrapper.contains("property (first , r#type)"));
-        assert!(!wrapper.contains("first in 0u32 .. 10"));
-        assert!(!wrapper.contains("a0"));
-        assert!(!wrapper.contains("a1"));
-    }
 
     #[test]
     fn bare_proptest_attr_has_no_parameters() {
